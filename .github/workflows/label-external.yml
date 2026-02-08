@@ -24,8 +24,8 @@ on:
     - synchronize
 
 permissions:
-  contents: read
   issues: write
+  contents: read
   pull-requests: write
 
 jobs:
