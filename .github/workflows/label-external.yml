@@ -63,9 +63,5 @@ jobs:
             gh api \
               repos/${{ github.repository }}/issues/$PR_NUMBER/labels \
               -X POST \
-              --input - <<EOF
-          {
-            "labels": [external"]
-          }
-          EOF
-             fi
+              -F labels[]=external || true
+          fi
