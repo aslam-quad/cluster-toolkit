@@ -15,7 +15,7 @@
 name: Label External PRs
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
     - develop
     types:
@@ -24,8 +24,8 @@ on:
     - synchronize
 
 permissions:
-  issues: write
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -33,35 +33,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repo
+    - name: Checkout base repository
       uses: actions/checkout@v4
 
-    - name: Add external label only for develop PRs
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Check if author is internal
+      id: check_author
       run: |
           AUTHOR="${{ github.event.pull_request.user.login }}"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
-
           echo "Author: $AUTHOR"
-          echo "Target branch: $TARGET_BRANCH"
-
-          # Extra safety check
-          if [ "$TARGET_BRANCH" != "develop" ]; then
-            echo "Not targeting develop → skipping"
-            exit 0
-          fi
 
           INTERNAL_USERS=$(jq -r '.[].login' cluster-toolkit-writers.json)
 
           if echo "$INTERNAL_USERS" | grep -qx "$AUTHOR"; then
-            echo "Internal user → no label"
+            echo "internal=true" >> $GITHUB_OUTPUT
           else
-            echo "External user → adding label"
-
-            gh api \
-              repos/${{ github.repository }}/issues/$PR_NUMBER/labels \
-              -X POST \
-              -F labels[]=external || true
+            echo "internal=false" >> $GITHUB_OUTPUT
           fi
+
+    - name: Add external label
+      if: steps.check_author.outputs.internal == 'false'
+      uses: actions-ecosystem/action-add-labels@v1
+      with:
+        labels: external
