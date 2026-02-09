@@ -63,5 +63,5 @@ jobs:
             gh api \
               repos/${{ github.repository }}/issues/$PR_NUMBER/labels \
               -X POST \
-              -F labels[]=external || true
+              -f labels='["external"]'
           fi
