@@ -15,7 +15,7 @@
 name: Label External PRs
 
 on:
-  pull_request_target:
+  pull_request:
     branches:
     - develop
     types:
@@ -24,7 +24,8 @@ on:
     - synchronize
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
   issues: write
   pull-requests: write
 
