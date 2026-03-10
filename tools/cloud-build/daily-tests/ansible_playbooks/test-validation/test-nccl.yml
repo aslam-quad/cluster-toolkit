@@ -16,12 +16,29 @@
 - name: Run prerequisite NCCL scripts
   shell: |
     set -x -e
-    cd {{ ansible_user_dir }}
     rm -rf cluster-toolkit
     git clone https://github.com/GoogleCloudPlatform/cluster-toolkit.git
-    cd cluster-toolkit/{{ nccl_test_path }}
+    cd cluster-toolkit
+
+    # PR build
+    if [ -n "${PR_NUMBER:-}" ]; then
+      git fetch origin pull/${PR_NUMBER}/head:pr-${PR_NUMBER}
+      git checkout pr-${PR_NUMBER}
+
+    # Branch build
+    elif [ -n "${BRANCH_NAME:-}" ]; then
+      git checkout ${BRANCH_NAME}
+
+    # Local run
+    else
+      git checkout develop
+    fi
+
+    cd {{ nccl_test_path }}
+
     bash import_pytorch_container.sh
     sbatch --wait build-nccl-tests.sh
+
   args:
     chdir: "{{ ansible_user_dir }}"
     executable: /bin/bash
