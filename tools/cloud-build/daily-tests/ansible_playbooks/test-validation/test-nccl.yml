@@ -16,6 +16,7 @@
 - name: Run prerequisite NCCL scripts
   shell: |
     set -x -e
+
     rm -rf cluster-toolkit
     git clone https://github.com/GoogleCloudPlatform/cluster-toolkit.git
     cd cluster-toolkit
@@ -24,19 +25,30 @@
     if [ -n "${PR_NUMBER:-}" ]; then
       git fetch origin pull/${PR_NUMBER}/head:pr-${PR_NUMBER}
       git checkout pr-${PR_NUMBER}
+      BUILD_TYPE="PR"
+      BUILD_REF="PR-${PR_NUMBER}"
 
     # Branch build
     elif [ -n "${BRANCH_NAME:-}" ]; then
+      git fetch origin ${BRANCH_NAME}
       git checkout ${BRANCH_NAME}
+      BUILD_TYPE="BRANCH"
+      BUILD_REF="${BRANCH_NAME}"
 
     # Local run
     else
       git checkout develop
+      BUILD_TYPE="LOCAL"
+      BUILD_REF="develop"
     fi
 
-    echo "current branch running:"
-    git branch --show-current
- 
+    echo "======================================="
+    echo "NCCL TEST TRIGGER INFORMATION"
+    echo "Build Type : ${BUILD_TYPE}"
+    echo "Build Ref  : ${BUILD_REF}"
+    echo "Git Branch : $(git branch --show-current)"
+    echo "======================================="
+
     cd {{ nccl_test_path }}
 
     bash import_pytorch_container.sh
