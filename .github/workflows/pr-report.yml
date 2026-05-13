@@ -17,28 +17,36 @@ name: Weekly PR Report
 on:
   workflow_dispatch:
   schedule:
-  - cron: '0 9 * * 1'
+  - cron: '30 5 * * 2'
 
 jobs:
   pr-report:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Generate PR report from origin repo
+    - name: Generate and send PR Report
+      env:
+        CHAT_WEBHOOK_URL: ${{ secrets.WEBHOOKPR_URL }}
       run: |
         REPO="GoogleCloudPlatform/cluster-toolkit"
 
         LAST_WEEK=$(date -d "7 days ago" --utc +%Y-%m-%dT%H:%M:%SZ)
 
         echo "Fetching merged PRs from develop branch"
-
-        curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-        "https://api.github.com/repos/$REPO/pulls?state=closed&base=develop" \
-        | jq -r --arg date "$LAST_WEEK" '.[]
-        | select(.merged_at != null and .merged_at > $date)
-        | "- PR #\(.number): \(.title) by \(.user.login) \(
-          if (.labels | length) > 0
-          then "[" + (.labels | map(.name) | join(", ")) + "]"
-          else "[no-label]"
-          end
-        )"'
+        MESSAGE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/$REPO/pulls?state=closed&base=develop" \
+          | jq -r --arg date "$LAST_WEEK" '
+            .[]
+            | select(.merged_at != null and .merged_at > $date)
+            | "• [#\(.number)](\(.html_url)) — \(.title) — \(.user.login) \(
+                if (.labels | length) > 0
+                then "[" + (.labels | map(.name) | join(", ")) + "]"
+                else "[no-label]"
+                end
+              )"
+          ')
+          echo "$MESSAGE"
+          curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"text\":\"Hi Team,\n\n🔀 Weekly PRs Merged to Develop Branch\n\n$MESSAGE\"}" \
+          "$CHAT_WEBHOOK_URL"
