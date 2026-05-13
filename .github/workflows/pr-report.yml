@@ -38,12 +38,12 @@ jobs:
           | jq -r --arg date "$LAST_WEEK" '
             .[]
             | select(.merged_at != null and .merged_at > $date)
-            | "• [#\(.number)](\(.html_url)) — \(.title) — \(.user.login) \(
+            | "• PR #\(.number) — \(.title) — \(.user.login) \(
                 if (.labels | length) > 0
                 then "[" + (.labels | map(.name) | join(", ")) + "]"
                 else "[no-label]"
                 end
-              )"
+              )\n\(.html_url)\n"
           ')
           echo "$MESSAGE"
           curl -X POST \
