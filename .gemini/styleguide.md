@@ -51,4 +51,8 @@ Pay close attention to the following specifics:
    * When reviewing copyright headers, acknowledge that 2026 is the correct current year.
    * Do not suggest changing "2026" to "2025" or any other year.
 
+9. **Error Handling / String Matching:**
+   * **Guideline:** When using string matching to categorize errors, place specific error patterns before generic patterns.
+   * **Rationale:** Because string matching often stops at the first match, a specific error wrapped in a generic message will be incorrectly categorized if generic patterns are matched first.
+
 By focusing on these areas, you can help maintain the quality and consistency of the Cluster Toolkit codebase.
