@@ -1,6 +1,6 @@
 ---
-name: Cluster Toolkit Guidelines
-description: Guidelines and best practices for the Cluster Toolkit project based on aggregated PR findings.
+name: cluster-toolkit
+description: Code review guidelines and best practices for the Cluster Toolkit project, covering Terraform, Ansible, Go, shell scripting, and general deployment configuration.
 generated_by: sage_framework
 ---
 
