@@ -74,5 +74,7 @@ venv*/
 # Ignore Gemini memories
 GEMINI.md
 
+test-kueue-cluster
+
 # Ignore Antigravity agents customizations
 .agents/
