@@ -1,0 +1,323 @@
++320
+Lines changed: 320 additions & 0 deletions
+Original file line number	Original file line	Diff line number	Diff line change
+[
+    {
+        "release_id": "release-candidate-1783011234",
+        "created_at": "2026-07-02T10:00:00Z",
+        "merged_at": "2026-07-02T16:45:00Z",
+        "pr_number": 5890,
+        "on_call_ldap": "neelgoyal",
+        "bugs": [
+            {
+                "ticket_id": "310001",
+                "title": "TPU topology verification failure on v6e",
+                "priority": "P0",
+                "assignee": "neelgoyal",
+                "status": "CLOSED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 1,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1782000000",
+        "created_at": "2026-06-25T09:15:00Z",
+        "merged_at": "2026-06-26T11:30:00Z",
+        "pr_number": 5882,
+        "on_call_ldap": "rahimkh",
+        "bugs": [
+            {
+                "ticket_id": "309281",
+                "title": "Lustre mount options parsing error",
+                "priority": "P0",
+                "assignee": "rahimkh",
+                "status": "CLOSED"
+            },
+            {
+                "ticket_id": "309282",
+                "title": "Minor typo in deployment guide markdown",
+                "priority": "P2",
+                "assignee": "rahimkh",
+                "status": "DEPRIORITIZED"
+            }
+        ],
+        "bug_stats": {
+            "total": 2,
+            "fixed": 1,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-candidate-1781000000",
+        "created_at": "2026-06-18T08:30:00Z",
+        "merged_at": "2026-06-19T17:15:00Z",
+        "pr_number": 5871,
+        "on_call_ldap": "kadupoornima",
+        "bugs": [],
+        "bug_stats": {
+            "total": 0,
+            "fixed": 0,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1779000000",
+        "created_at": "2026-06-03T11:00:00Z",
+        "merged_at": "2026-06-04T15:20:00Z",
+        "pr_number": 5850,
+        "on_call_ldap": "neelgoyal",
+        "bugs": [
+            {
+                "ticket_id": "305101",
+                "title": "Incorrect Multi-NIC policy route interface binding",
+                "priority": "P1",
+                "assignee": "neelgoyal",
+                "status": "CLOSED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 1,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1771000000",
+        "created_at": "2026-04-02T10:00:00Z",
+        "merged_at": "2026-04-03T12:00:00Z",
+        "pr_number": 5712,
+        "on_call_ldap": "rahimkh",
+        "bugs": [
+            {
+                "ticket_id": "298101",
+                "title": "Kueue integration test flakiness under high stress",
+                "priority": "P1",
+                "assignee": "rahimkh",
+                "status": "CLOSED"
+            },
+            {
+                "ticket_id": "298102",
+                "title": "Console telemetry payload optimization",
+                "priority": "P1",
+                "assignee": "rahimkh",
+                "status": "DEPRIORITIZED"
+            }
+        ],
+        "bug_stats": {
+            "total": 2,
+            "fixed": 1,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-candidate-1763000000",
+        "created_at": "2026-01-08T09:00:00Z",
+        "merged_at": "2026-01-09T14:00:00Z",
+        "pr_number": 5580,
+        "on_call_ldap": "neelgoyal",
+        "bugs": [],
+        "bug_stats": {
+            "total": 0,
+            "fixed": 0,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1751000000",
+        "created_at": "2025-07-10T10:00:00Z",
+        "merged_at": "2025-07-11T16:30:00Z",
+        "pr_number": 5120,
+        "on_call_ldap": "kadupoornima",
+        "bugs": [
+            {
+                "ticket_id": "210928",
+                "title": "Unreachable destroy handling hangs on cluster depletion",
+                "priority": "P0",
+                "assignee": "kadupoornima",
+                "status": "CLOSED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 1,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1721000000",
+        "created_at": "2024-07-15T09:00:00Z",
+        "merged_at": "2024-07-16T15:00:00Z",
+        "pr_number": 4200,
+        "on_call_ldap": "neelgoyal",
+        "bugs": [
+            {
+                "ticket_id": "100982",
+                "title": "Initial v4 TPU deployment recipe validation",
+                "priority": "P1",
+                "assignee": "neelgoyal",
+                "status": "CLOSED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 1,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-release-candidate-1783064027",
+        "created_at": "2026-07-03T07:33:41Z",
+        "merged_at": "2026-07-03T07:40:21Z",
+        "pr_number": 37,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530801543",
+                "title": "Incorrect version in version.txt",
+                "priority": "P3",
+                "assignee": "agrawalkhushi",
+                "status": "ASSIGNED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 0,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-release-candidate-1783066687",
+        "created_at": "2026-07-03T08:18:02Z",
+        "merged_at": "2026-07-03T08:22:17Z",
+        "pr_number": 41,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530811908",
+                "title": "Incorrect version specified in configuration",
+                "priority": "P3",
+                "assignee": "agrawalkhushi",
+                "status": "ASSIGNED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 0,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-release-candidate-1783072558",
+        "created_at": "2026-07-03T09:55:53Z",
+        "merged_at": "2026-07-03T10:01:56Z",
+        "pr_number": 51,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530835824",
+                "title": "Incorrect Version Number in version.txt",
+                "priority": "P3",
+                "assignee": "agrawalkhushi",
+                "status": "ASSIGNED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 0,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-unknown",
+        "created_at": "2026-07-03T10:01:56Z",
+        "merged_at": "2026-07-03T10:01:59Z",
+        "pr_number": null,
+        "on_call_ldap": null,
+        "bugs": [],
+        "bug_stats": {
+            "total": 0,
+            "fixed": 0,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-release-candidate-1783072952",
+        "created_at": "2026-07-03T10:02:27Z",
+        "merged_at": "2026-07-03T10:04:36Z",
+        "pr_number": 54,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [],
+        "bug_stats": {
+            "total": 0,
+            "fixed": 0,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1783073910",
+        "created_at": "2026-07-03T10:18:24Z",
+        "merged_at": "2026-07-03T10:22:54Z",
+        "pr_number": 63,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530843792",
+                "title": "Critical Security Vulnerability in Current Version",
+                "priority": "P3",
+                "assignee": "agrawalkhushi",
+                "status": "ASSIGNED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 0,
+            "deprioritized": 1
+        }
+    },
+    {
+        "release_id": "release-candidate-1783074968",
+        "created_at": "2026-07-03T10:36:02Z",
+        "merged_at": "2026-07-03T10:41:38Z",
+        "pr_number": 67,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530846797",
+                "title": "Critical Release Blocker Identified",
+                "priority": "P0",
+                "assignee": "agrawalkhushi",
+                "status": "FIXED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 1,
+            "deprioritized": 0
+        }
+    },
+    {
+        "release_id": "release-candidate-1783076488",
+        "created_at": "2026-07-03T11:01:22Z",
+        "merged_at": "2026-07-03T11:05:12Z",
+        "pr_number": 70,
+        "on_call_ldap": "agrawalkhushi",
+        "bugs": [
+            {
+                "ticket_id": "530854285",
+                "title": "Critical issue identified: Incorrect value or logic",
+                "priority": "P3",
+                "assignee": "agrawalkhushi",
+                "status": "ASSIGNED"
+            }
+        ],
+        "bug_stats": {
+            "total": 1,
+            "fixed": 0,
+            "deprioritized": 1
+        }
+    }
+]
