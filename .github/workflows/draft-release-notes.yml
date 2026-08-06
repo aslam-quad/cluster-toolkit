@@ -70,6 +70,7 @@ jobs:
           git push origin "$VERSION"
         fi
         gh release create "$VERSION" \
+          --verify-tag \
           --title "$VERSION" \
           --target "$RC_BRANCH" \
           --draft \
