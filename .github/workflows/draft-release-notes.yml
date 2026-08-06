@@ -62,6 +62,13 @@ jobs:
         VERSION: ${{ steps.release.outputs.version }}
         RC_BRANCH: ${{ steps.release.outputs.rc_branch }}
       run: |
+        #fetch all tags
+        git fetch --tags
+
+        if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+          git tag "$VERSION" "$RC_BRANCH"
+          git push origin "$VERSION"
+        fi
         gh release create "$VERSION" \
           --title "$VERSION" \
           --target "$RC_BRANCH" \
