@@ -70,6 +70,12 @@ class GitHubClient:
                         pr_num = parts[1].strip()
                         if pr_num.isdigit():
                             logging.info(f"Successfully created Version PR: {pr_num}")
+                            if self.repo:
+                                try:
+                                    self.repo.get_pull(int(pr_num)).add_to_labels("release-chore")
+                                except Exception as e:
+                                    logging.warning(f"Could not label version PR {Pr_num}: {e}")
+
                             # 3. Return the clean tag-based branch name to the orchestrator
                             return int(pr_num), rc_branch_detected
                             
@@ -123,6 +129,7 @@ class GitHubClient:
         if not self.repo: return 123
         try:
             pr = self.repo.create_pull(title=title, body=body, head=head, base=base, draft=True)
+            pr.add_to_labels("release-chore")
             print(f"Created Draft PR: {pr.html_url}")
             return pr.number
         except Exception as e:
@@ -259,6 +266,10 @@ class GitHubClient:
                     draft=False
                 )
                 print(f"Created Backport PR: {pr.html_url}")
+            try:
+                pr.add_to_labels("release-chore")
+            except Exception as e:
+                print(f"warning: Could not label Backport PR {Pr.number}: {e}")
             
             # Ensure it is ready for review
             env = os.environ.copy()
