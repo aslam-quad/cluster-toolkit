@@ -222,9 +222,17 @@ class GitHubClient:
             return False
 
     def get_draft_release(self):
-        """Finds the current draft release (runs once, right when PR goes to review)."""
+        """Finds the current draft release after waiting for GitHub Actions to complete."""
+        import time  # 1. Bring in Python's timer utility
+
         if not self.repo:
             return None
+
+        # 2. Tell the script to pause for 60 seconds
+        print("Waiting 60 seconds for GitHub Actions to create the new draft release...")
+        time.sleep(60)
+
+        # 3. Now fetch the updated draft release
         try:
             releases = self.repo.get_releases()
             for r in releases:
@@ -234,16 +242,26 @@ class GitHubClient:
         except Exception as e:
             print(f"Error fetching draft release: {e}")
             return None
- 
-    def get_release_by_id(self, release_id):
-        """Checks the status of a specific release we already found earlier."""
-        if not self.repo or not release_id:
+
+    def get_latest_published_release(self, wait_seconds=60):
+        """Waits for post-merge GitHub workflow to complete, then gets the published release link."""
+        import time
+
+        if not self.repo:
             return None
+
+        # 1. Pause to give GitHub Actions time to publish the release
+        if wait_seconds > 0:
+            print(f"PR merged! Waiting {wait_seconds} seconds for the workflow to publish the release...")
+            time.sleep(wait_seconds)
+
+        # 2. Fetch the latest official published release
         try:
-            r = self.repo.get_release(release_id)
-            return {"url": r.html_url, "draft": r.draft}
+            latest_release = self.repo.get_latest_release()
+            print(f"Successfully fetched published release: {latest_release.html_url}")
+            return latest_release.html_url
         except Exception as e:
-            print(f"Error fetching release {release_id}: {e}")
+            print(f"Error fetching latest published release: {e}")
             return None
 
     def create_backport_pr(self, pr_number):

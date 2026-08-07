@@ -234,7 +234,6 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
             "reviewer_assigned": False,
             "seen_comments": 0,
             "draft_release_notes_url": None,
-            "draft_release_id": None,
             "published_release_notes_url": None
         }
         
@@ -363,7 +362,6 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
                 "reviewer_assigned": False,
                 "seen_comments": 0,
                 "draft_release_notes_url": None,
-                "draft_release_id": None,
                 "published_release_notes_url": None
             }
             with open(STATE_FILE, "w") as f:

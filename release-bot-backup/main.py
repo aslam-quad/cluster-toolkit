@@ -231,8 +231,7 @@ class ReleaseOrchestrator:
             draft_release = self.github.get_draft_release()
             if draft_release:
                 self.state_manager.update_state(
-                    draft_release_notes_url=draft_release["url"],
-                    draft_release_id=draft_release["id"]
+                    draft_release_notes_url=draft_release["url"]
                 )
         # 3. Check for new comments that might block approval
         comments = self.github.get_pr_comments(pr_number)
@@ -299,12 +298,11 @@ class ReleaseOrchestrator:
             if not self.github.merge_pr(pr_number):
                 logging.error(f"Failed to merge PR {pr_number}. Blocking backport creation.")
                 return
-             # NEW: the same draft release should now be published — check and save it
-            draft_id = state.get("draft_release_id")
-            if draft_id and not state.get("published_release_notes_url"):
-                release_status = self.github.get_release_by_id(draft_id)
-                if release_status and not release_status["draft"]:
-                    self.state_manager.update_state(published_release_notes_url=release_status["url"])
+             # NEW: the draft release should now be published — fetch and save it
+        if not state.get("published_release_notes_url"):
+            published_url = self.github.get_latest_published_release()
+            if published_url:
+                 self.state_manager.update_state(published_release_notes_url=published_url)
             
             # Create backport PR
             backport_pr_number = self.github.create_backport_pr(pr_number)

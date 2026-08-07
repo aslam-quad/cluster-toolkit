@@ -47,7 +47,6 @@ class StateManager:
             "reviewer_assigned": False,
             "seen_comments": 0,
             "draft_release_notes-url": None,
-            "draft_release_id": None,
             "published_release_notes_url": None
         }
 
