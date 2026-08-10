@@ -81,6 +81,8 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
             self.handle_stop_release()
         elif path == "/api/resume":
             self.handle_resume_release()
+        elif path == "/api/refresh-draft-release":
+            self.handle_refresh_draft_release()
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -378,6 +380,7 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
                     state = json.load(f)
             except Exception:
                 pass
+
                 
         if state.get("CURRENT_STATE") != "MANUALLY_CANCELLED":
             self.send_json({"success": False, "error": "Release is not in manually cancelled state."})
@@ -409,7 +412,40 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json({"success": False, "error": f"Failed to restore state: {e}"})
             return
-            
+        
+    def handle_refresh_draft_release(self):
+        """
+        Re-fetches the current draft release from GitHub RIGHT NOW (no wait)
+        and overwrites draft_release_notes_url in state.
+        This is what picks up a new URL if the draft release changed since
+        the last time it was cached.
+        """
+        state = {}
+        if STATE_FILE.exists():
+            try:
+                with open(STATE_FILE, "r") as f:
+                    state = json.load(f)
+            except Exception:
+                pass
+ 
+        try:
+            from clients import GitHubClient
+            github = GitHubClient()
+            draft_release = github.get_draft_release(wait_seconds=0)
+ 
+            if draft_release:
+                state["draft_release_notes_url"] = draft_release["url"]
+                with open(STATE_FILE, "w") as f:
+                    json.dump(state, f, indent=4)
+                self.send_json({"success": True, "draft_release_notes_url": draft_release["url"]})
+            else:
+                state["draft_release_notes_url"] = None
+                with open(STATE_FILE, "w") as f:
+                    json.dump(state, f, indent=4)
+                self.send_json({"success": True, "draft_release_notes_url": None, "message": "No draft release currently found on GitHub."})
+        except Exception as e:
+            self.send_json({"success": False, "error": f"Failed to refresh draft release: {e}"})
+
         # Restart daemon
         import subprocess
         log_file = BASE_DIR / "daemon.log"

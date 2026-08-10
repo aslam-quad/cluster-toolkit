@@ -228,7 +228,7 @@ class ReleaseOrchestrator:
             self.github.assign_reviewer(pr_number, on_call_github)
             self.state_manager.update_state(reviewer_assigned=True)
             
-            draft_release = self.github.get_draft_release()
+            draft_release = self.github.get_draft_release(wait_seconds=60)
             if draft_release:
                 self.state_manager.update_state(
                     draft_release_notes_url=draft_release["url"]
@@ -298,11 +298,14 @@ class ReleaseOrchestrator:
             if not self.github.merge_pr(pr_number):
                 logging.error(f"Failed to merge PR {pr_number}. Blocking backport creation.")
                 return
-             # NEW: the draft release should now be published — fetch and save it
-        if not state.get("published_release_notes_url"):
+
+            #  Fetch the published Release URL right after RC merge
             published_url = self.github.get_latest_published_release()
             if published_url:
-                 self.state_manager.update_state(published_release_notes_url=published_url)
+                self.state_manager.update_state(published_release_notes_url=published_url)
+                logging.info(f"Published release URL updated in state: {published_url}")
+            else:
+                logging.warning("Failed to fetch published release URL post-merge.")
             
             # Create backport PR
             backport_pr_number = self.github.create_backport_pr(pr_number)

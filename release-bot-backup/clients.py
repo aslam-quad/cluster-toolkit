@@ -221,27 +221,31 @@ class GitHubClient:
             print(f"Error merging PR {pr_number}: {e}")
             return False
 
-    def get_draft_release(self):
-        """Finds the current draft release after waiting for GitHub Actions to complete."""
-        import time  # 1. Bring in Python's timer utility
-
+    def get_draft_release(self, wait_seconds=0):
+        """Finds the current draft release. Pass wait_seconds>0 to pause
+        first (e.g. right after PR creation, giving GitHub Actions time
+        to generate the draft). The refresh button calls this with
+        wait_seconds=0 for an instant, un-delayed check."""
         if not self.repo:
             return None
-
-        # 2. Tell the script to pause for 60 seconds
-        print("Waiting 60 seconds for GitHub Actions to create the new draft release...")
-        time.sleep(60)
-
-        # 3. Now fetch the updated draft release
+ 
+        if wait_seconds > 0:
+            import time
+            print(f"Waiting {wait_seconds}s for GitHub Actions to create the draft release...")
+            time.sleep(wait_seconds)
+ 
         try:
-            releases = self.repo.get_releases()
-            for r in releases:
-                if r.draft:
-                    return {"url": r.html_url, "id": r.id}
-            return None
+           drafts = [r for r in self.repo.get_releases() if r.draft]
+           if not drafts:
+               return None
+           # Always pick the most recently created draft — this is what
+           # makes "refresh" pick up a new URL if the draft was
+           # deleted/recreated since the last fetch.
+           newest = max(drafts, key=lambda r: r.created_at)
+           return {"url": newest.html_url, "id": newest.id}
         except Exception as e:
-            print(f"Error fetching draft release: {e}")
-            return None
+           print(f"Error fetching draft release: {e}")
+           return None
 
     def get_latest_published_release(self, wait_seconds=60):
         """Waits for post-merge GitHub workflow to complete, then gets the published release link."""

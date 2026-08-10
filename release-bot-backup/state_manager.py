@@ -46,7 +46,7 @@ class StateManager:
             "backport_pr_number": None,
             "reviewer_assigned": False,
             "seen_comments": 0,
-            "draft_release_notes-url": None,
+            "draft_release_notes_url": None,
             "published_release_notes_url": None
         }
 
