@@ -129,7 +129,6 @@ class GitHubClient:
         if not self.repo: return 123
         try:
             pr = self.repo.create_pull(title=title, body=body, head=head, base=base, draft=True)
-            pr.add_to_labels("release-chore")
             print(f"Created Draft PR: {pr.html_url}")
             return pr.number
         except Exception as e:

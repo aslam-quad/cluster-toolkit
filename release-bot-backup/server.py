@@ -83,6 +83,8 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
             self.handle_resume_release()
         elif path == "/api/refresh-draft-release":
             self.handle_refresh_draft_release()
+        elif path == "/api/run-binaries":
+            self.handle_run_binaries()
         else:
             self.send_error(404, "Endpoint Not Found")
 
@@ -275,6 +277,30 @@ class ControlPlaneHandler(http.server.BaseHTTPRequestHandler):
             self.send_json({"success": True})
         except Exception as e:
             self.send_json({"success": False, "error": f"Failed to launch daemon: {e}"})
+
+    def handle_run_binaries(self):
+        import subprocess
+ 
+        script_path = BASE_DIR / "tools" / "publish-release.sh"
+        if not script_path.exists():
+            self.send_json({"success": False, "error": f"Script not found: {script_path}"})
+            return
+ 
+        try:
+            result = subprocess.run(
+                ["bash", str(script_path)],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            self.send_json({
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            })
+        except Exception as e:
+            self.send_json({"success": False, "error": f"Failed to run script: {e}"})
 
     def handle_stop_release(self):
         state = {}

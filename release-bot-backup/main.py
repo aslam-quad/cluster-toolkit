@@ -135,10 +135,15 @@ class ReleaseOrchestrator:
             return # Block until merged
             
         logging.info(f"Version PR {version_pr_number} is merged! Opening main RC PR...")
-        # 4. Open main rc -> main PR in DRAFT MODE
         state = self.state_manager.read_state()
         rc_branch = state.get("rc_branch") or "release-candidate"
-        pr_number = self.github.open_draft_pr(rc_branch, "main", "Release Candidate")
+ 
+        # Extract just the version part (e.g. "v.10.0") from rc_branch (e.g. "release-candidate-v.10.0")
+        version = rc_branch.replace("release-candidate-", "", 1) if rc_branch.startswith("release-candidate-") else rc_branch
+ 
+        pr_title = f"Release Candidate {version}"
+        pr_body = f"Release Candidate {version}"
+        pr_number = self.github.open_draft_pr(rc_branch, "main", pr_title, pr_body)
         self.state_manager.update_state(pr_number=pr_number)
         
         self.state_manager.set_current_state("TRIAGE")
@@ -226,6 +231,10 @@ class ReleaseOrchestrator:
         if not state.get("reviewer_assigned"):
             self.github.convert_pr_to_active(pr_number)
             self.github.assign_reviewer(pr_number, on_call_github)
+            try:
+                self.github.repo.get_pull(int(pr_number)).add_to_labels("release-chore")
+            except Exception as e:
+                logging.warning(f"Could not label PR {pr_number}: {e}")
             self.state_manager.update_state(reviewer_assigned=True)
             
             draft_release = self.github.get_draft_release(wait_seconds=60)

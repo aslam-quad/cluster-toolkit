@@ -845,6 +845,7 @@
             </p>
             <div style="margin-bottom: 2rem;">
               <button class="control-btn" onclick="startAdhocRelease()">🚀 Start Adhoc Release</button>
+	      <button class="control-btn" style="background: var(==success);" onclick="runBinaries()">📦 Run Binaries</button>
             </div>
             <div style="display:flex; justify-content:center; gap:2rem; border-top:1px solid var(--border-dark); padding-top:1.5rem;">
               <div>
@@ -1064,6 +1065,38 @@
           document.getElementById('no-release-icon').innerText = "😴";
           document.getElementById('no-release-title').innerText = "No Active Release";
           document.getElementById('no-release-details').innerText = "There is currently no release cycle in progress.";
+        });
+    }
+
+    let isRunningBinaries = false;
+ 
+    function runBinaries() {
+      if (isRunningBinaries) return;
+      if (!confirm("This will publish the latest tagged release to the production pipeline. Continue?")) return;
+ 
+      isRunningBinaries = true;
+      const btn = event.target;
+      const originalText = btn.innerText;
+      btn.disabled = true;
+      btn.innerText = "Publishing...";
+ 
+      fetch('/api/run-binaries', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            alert("✅ Release published successfully.\n\nOutput:\n" + (data.output || "(no output)"));
+          } else {
+            alert("❌ Error:\n\n" + (data.error || "Unknown error"));
+          }
+        })
+        .catch(err => {
+          console.error("Error running binaries:", err);
+          alert("❌ Network error while publishing release.");
+        })
+        .finally(() => {
+          isRunningBinaries = false;
+          btn.disabled = false;
+          btn.innerText = originalText;
         });
     }
 
