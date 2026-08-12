@@ -57,7 +57,26 @@ variable "kueue_migrated_tests" {
     "chrome-remote-desktop-ubuntu",
     "ansible-vm",
     "e2e",
-    "hcls"
+    "hcls",
+    "slurm-gke",
+    "slurm-flex",
+    "ml-slurm",
+    "htc-slurm",
+    "hpc-build-slurm-image",
+    "hpc-enterprise-slurm",
+    "spack-gromacs",
+    "gcluster-dockerfile",
+    "gke",
+    "gke-inactive-reservation",
+    "ml-gke",
+    "ml-gke-e2e",
+    "gke-storage",
+    "gke-managed-hyperdisk",
+    "slurm-rapid-storage",
+    "gke-managed-lustre",
+    "pfs-managed-lustre-slurm",
+    "pfs-managed-lustre-vm",
+    "netapp-volumes"
   ]
 }
 
