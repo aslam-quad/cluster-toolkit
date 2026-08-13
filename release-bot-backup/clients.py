@@ -74,7 +74,7 @@ class GitHubClient:
                                 try:
                                     self.repo.get_pull(int(pr_num)).add_to_labels("release-chore")
                                 except Exception as e:
-                                    logging.warning(f"Could not label version PR {Pr_num}: {e}")
+                                    logging.warning(f"Could not label version PR {pr_num}: {e}")
 
                             # 3. Return the clean tag-based branch name to the orchestrator
                             return int(pr_num), rc_branch_detected
@@ -290,7 +290,7 @@ class GitHubClient:
             try:
                 pr.add_to_labels("release-chore")
             except Exception as e:
-                print(f"warning: Could not label Backport PR {Pr.number}: {e}")
+                print(f"warning: Could not label Backport PR {pr.number}: {e}")
             
             # Ensure it is ready for review
             env = os.environ.copy()
