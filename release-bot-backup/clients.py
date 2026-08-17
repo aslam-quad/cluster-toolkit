@@ -490,15 +490,22 @@ class BuganizerClient:
 
 class TestRunnerClient:
     def trigger_tests(self, pr_number):
-        print(f"Triggering real integration tests for PR {pr_number}...")
-        # Actually execute a test script via subprocess
+        print(f"Triggering integration tests for PR {pr_number} using babysit...")
+        script_path = os.path.join(os.path.dirname(__file__), "run_tests.sh")
+        # Ensure we execute from the repository root since babysit expects tools/cloud-build/...
+        repo_root = os.path.dirname(os.path.dirname(__file__))
         try:
-            result = subprocess.run(["bash", "run_tests.sh"], capture_output=True, text=True)
+            result = subprocess.run(
+                ["bash", script_path, str(pr_number)], 
+                cwd=repo_root, 
+                capture_output=True, 
+                text=True
+            )
             if result.returncode == 0:
                 print("Tests passed successfully.")
                 return "SUCCESS"
             else:
-                print(f"Tests failed. Output:\n{result.stderr}")
+                print(f"Tests failed. Output:\n{result.stderr}\nStdout:\n{result.stdout}")
                 return "FAILURE"
         except Exception as e:
             print(f"Failed to execute run_tests.sh: {e}")

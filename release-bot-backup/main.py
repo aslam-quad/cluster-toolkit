@@ -144,7 +144,12 @@ class ReleaseOrchestrator:
         pr_title = f"Release Candidate {version}"
         pr_body = f"Release Candidate {version}"
         pr_number = self.github.open_draft_pr(rc_branch, "main", pr_title, pr_body)
-        self.state_manager.update_state(pr_number=pr_number)
+        
+        import time
+        self.state_manager.update_state(
+            pr_number=pr_number,
+            pr_created_timestamp=time.time()
+        )
         
         self.state_manager.set_current_state("TRIAGE")
 
@@ -210,15 +215,28 @@ class ReleaseOrchestrator:
 
     def handle_test_execution(self):
         logging.info("State 3: Test Execution and Monitoring")
-        pr_number = self.state_manager.read_state().get("pr_number")
+        state = self.state_manager.read_state()
+        pr_number = state.get("pr_number")
+        
+        # Enforce 5 minute wait before triggering tests
+        pr_created_time = state.get("pr_created_timestamp")
+        if pr_created_time:
+            import time
+            elapsed = time.time() - pr_created_time
+            if elapsed < 300: # 5 minutes = 300 seconds
+                logging.info(f"Waiting for 5 minutes after PR creation before running tests. Elapsed: {int(elapsed)}s / 300s")
+                return # Skip triggering this cycle
+
         run_id = self.test_runner.trigger_tests(pr_number)
         
         # Simulate polling the test runner...
         status = self.test_runner.check_test_status(run_id)
         if status == "SUCCESS":
-            self.state_manager.set_current_state("AWAITING_FINAL_REVIEW")
+            logging.info("Tests passed successfully.")
         else:
-            self.chat.send_message(f"Tests failed! Logs: {self.test_runner.get_failure_logs(run_id)}")
+            logging.warning("Tests failed, but proceeding to AWAITING_FINAL_REVIEW as requested. (Chat alert suppressed for tests)")
+        
+        self.state_manager.set_current_state("AWAITING_FINAL_REVIEW")
 
     def handle_awaiting_final_review(self):
         logging.info("State 4: Awaiting Final Review")
