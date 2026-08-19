@@ -57,13 +57,26 @@ jobs:
         echo "rc_branch=$BRANCH" >> "$GITHUB_OUTPUT"
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+    - name: Setup git auth for gh CLI
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: gh auth setup-git
+      
     - name: Create Draft Release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         VERSION: ${{ steps.release.outputs.version }}
         RC_BRANCH: ${{ steps.release.outputs.rc_branch }}
       run: |
+        #fetch all tags
+        git fetch --tags
+
+        if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+          git tag "$VERSION"
+          git push origin "$VERSION"
+        fi
         gh release create "$VERSION" \
+          --verify-tag \
           --title "$VERSION" \
           --target "$RC_BRANCH" \
           --draft \
