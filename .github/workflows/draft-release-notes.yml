@@ -60,7 +60,7 @@ jobs:
     - name: Setup git auth for gh CLI
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: gh auth setup-gi
+      run: gh auth setup-git
       
     - name: Create Draft Release
       env:
