@@ -76,6 +76,58 @@ load_exclusions() {
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		process_line "$line"
 	done < <(gcloud storage cat "$EXCLUSION_FILE")
+
+	log "INFO" "Dynamically fetching active Cloud Builds and Jobs to protect their service accounts..."
+
+	# 1. Fetch ongoing Cloud Build builds
+	local active_builds
+	if active_builds=$(gcloud builds list --ongoing --project="$PROJECT_ID" --format="value(id, substitutions.TRIGGER_NAME)" 2>/dev/null); then
+		while IFS=$'\t' read -r build_id trigger_name; do
+			if [[ -n "$build_id" ]]; then
+				local short_id="${build_id:0:6}"
+				log "INFO" "Protecting ongoing Cloud Build prefix: $short_id"
+				EXCLUSION_MAP["$short_id"]=1
+
+				# If a trigger name exists, optionally protect the combined prefix (e.g., gke-storage-17d120)
+				if [[ -n "$trigger_name" && "$trigger_name" != "None" ]]; then
+					log "INFO" "Protecting ongoing Cloud Build combined prefix: ${trigger_name}-${short_id}"
+					EXCLUSION_MAP["${trigger_name}-${short_id}"]=1
+				fi
+			fi
+		done <<<"$active_builds"
+	else
+		log "WARNING" "Failed to list ongoing Cloud Builds."
+	fi
+
+	# 2. Fetch active GKE Kueue batch jobs
+	if command -v kubectl &>/dev/null; then
+		local active_clusters
+		if active_clusters=$(gcloud container clusters list --project="$PROJECT_ID" --format="value(name,location)" 2>/dev/null); then
+			while IFS=$'\t' read -r cluster_name location; do
+				if [[ -n "$cluster_name" ]]; then
+					# Temporarily get credentials to check for kueue workloads
+					if KUBECONFIG=$(mktemp) gcloud container clusters get-credentials "$cluster_name" --location="$location" --project="$PROJECT_ID" &>/dev/null; then
+						export KUBECONFIG
+						local kueue_jobs
+						# Fetch kueue workloads that are not Finished
+						if kueue_jobs=$(kubectl get workloads.kueue.x-k8s.io -A -o jsonpath='{range .items[?(@.status.conditions[?(@.type=="Finished")].status!="True")]}{.metadata.name}{"\n"}{end}' 2>/dev/null); then
+							while IFS= read -r job_name; do
+								if [[ -n "$job_name" ]]; then
+									log "INFO" "Protecting active GKE Kueue job: $job_name"
+									EXCLUSION_MAP["$job_name"]=1
+								fi
+							done <<<"$kueue_jobs"
+						fi
+						rm -f "$KUBECONFIG"
+						unset KUBECONFIG
+					fi
+				fi
+			done <<<"$active_clusters"
+		fi
+	else
+		log "WARNING" "kubectl not found; skipping dynamic fetch of active GKE Kueue batch jobs."
+	fi
+
 	# As we make complete transition from exclusion list to use of labels, this part can be removed.
 	# Currently keeping it here to prevent deletion of important resources.
 	if [[ ${#EXCLUSION_MAP[@]} -eq 0 ]]; then
