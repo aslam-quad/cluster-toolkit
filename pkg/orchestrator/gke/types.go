@@ -23,6 +23,7 @@ import (
 	"hpc-toolkit/pkg/shell"
 	"net/http"
 	"strings"
+	"sync"
 
 	"cloud.google.com/go/filestore/apiv1/filestorepb"
 	compute "google.golang.org/api/compute/v1"
@@ -42,7 +43,7 @@ const (
 // checkpointConfigurationGVR defines the GroupVersionResource for GKE CheckpointConfiguration resources.
 var checkpointConfigurationGVR = schema.GroupVersionResource{
 	Group:    "checkpointing.gke.io",
-	Version:  "v1alpha1",
+	Version:  "v1",
 	Resource: "checkpointconfigurations",
 }
 
@@ -51,6 +52,27 @@ var namespaceGVR = schema.GroupVersionResource{
 	Group:    "",
 	Version:  "v1",
 	Resource: "namespaces",
+}
+
+// serviceAccountGVR defines the GroupVersionResource for core Kubernetes ServiceAccount resources.
+var serviceAccountGVR = schema.GroupVersionResource{
+	Group:    "",
+	Version:  "v1",
+	Resource: "serviceaccounts",
+}
+
+// podGVR defines the GroupVersionResource for core Kubernetes Pod resources.
+var podGVR = schema.GroupVersionResource{
+	Group:    "",
+	Version:  "v1",
+	Resource: "pods",
+}
+
+// daemonsetGVR defines the GroupVersionResource for apps/v1 DaemonSet resources.
+var daemonsetGVR = schema.GroupVersionResource{
+	Group:    "apps",
+	Version:  "v1",
+	Resource: "daemonsets",
 }
 
 // HTTPClient abstracts HTTP GET calls for testability and thread safety.
@@ -108,11 +130,12 @@ type GKEOrchestrator struct {
 	dynamicSlicingCache         map[string]bool
 	staticSlicingCache          map[string]bool
 	topologyCache               map[string]string
-	policyCache                 map[string]string
+	resourcePolicyCache         map[string]*GCEWorkloadPolicy
 	slicingTopologiesChecked    bool
 	slicingTopologiesDetected   bool
 	gkeCustomTemplatesPath      string
 	httpClient                  HTTPClient
+	httpOnce                    sync.Once
 }
 
 // Types for GetClusterInfo unmarshaling
@@ -208,6 +231,7 @@ type ManifestOptions struct {
 	IsPathwaysJob                 bool
 	GKEMTCEnabled                 bool
 	GKEMTCRamdiskDirectory        string
+	MLDiagnosticsEnabled          bool
 	Verbose                       bool
 	Env                           map[string]string
 	AdditionalManifests           []string
@@ -280,6 +304,15 @@ type gkeAutoscaling struct {
 	TotalMaxNodeCount int  `json:"totalMaxNodeCount"`
 }
 
+// GCEWorkloadPolicy represents a Google Compute Engine workload resource policy.
+type GCEWorkloadPolicy struct {
+	Name                    string `json:"name"`
+	Region                  string `json:"region"`
+	AcceleratorTopology     string `json:"acceleratorTopology,omitempty"`
+	AcceleratorTopologyMode string `json:"acceleratorTopologyMode,omitempty"`
+	Type                    string `json:"type,omitempty"`
+}
+
 type gkePlacementPolicy struct {
 	PolicyName              string `json:"policyName,omitempty"`
 	AcceleratorTopologyMode string `json:"acceleratorTopologyMode,omitempty"`
@@ -324,6 +357,11 @@ type gkeHighScaleCheckpointingConfig struct {
 
 type controlPlaneEndpointsConfig struct {
 	DnsEndpointConfig *dnsEndpointConfig `json:"dnsEndpointConfig,omitempty"`
+	IPEndpointsConfig *ipEndpointsConfig `json:"ipEndpointsConfig,omitempty"`
+}
+
+type ipEndpointsConfig struct {
+	EnablePublicEndpoint bool `json:"enablePublicEndpoint,omitempty"`
 }
 
 type dnsEndpointConfig struct {
@@ -339,6 +377,9 @@ type JobSetCondition struct {
 }
 
 type JobSetStatus struct {
+	Spec struct {
+		Suspend bool `json:"suspend"`
+	} `json:"spec"`
 	Status struct {
 		Conditions []JobSetCondition `json:"conditions"`
 	} `json:"status"`
@@ -404,6 +445,7 @@ type jobSetTemplateData struct {
 	IsGPU                         bool
 	GKEMTCEnabled                 bool
 	GKEMTCRamdiskDirectory        string
+	MLDiagnosticsEnabled          bool
 }
 
 // Types for parsing kubectl get nodes -o json
