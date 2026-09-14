@@ -58,6 +58,10 @@
         state: directory
         suffix: chs_clone
       register: chs_temp_dir
+    
+    - name: Configure Git credential helper for Googlesource
+      ansible.builtin.command: git config --global credential.https://cluster-toolkit.googlesource.com.helper "!gcloud auth git-helper --ignore-unknown"
+      changed_when: false
 
     - name: Clone CHS repository
       ansible.builtin.git:
