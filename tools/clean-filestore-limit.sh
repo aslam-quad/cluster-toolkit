@@ -13,66 +13,237 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# shellcheck disable=SC2317
-# known issue that shellcheck wrongly detects trap function as unreachable
-
 set -e -o pipefail
-
-# shellcheck disable=SC2329
-function enable_filestore_api() {
-	status=$?
-	echo "Re-enabling Filestore API..."
-	gcloud services enable file.googleapis.com --project "${PROJECT_ID}"
-	exit "$status"
-}
 
 BUILD_ID=${BUILD_ID:-non-existent-build}
 PROJECT_ID=${PROJECT_ID:-$(gcloud config get-value project)}
+# Supports DRY_RUN passed from YAML (defaults to false if run directly)
+DRY_RUN=${DRY_RUN:-false}
+
 if [ -z "$PROJECT_ID" ]; then
-	echo "PROJECT_ID must be defined"
+	echo "ERROR: PROJECT_ID must be defined"
 	exit 1
 fi
 
-ACTIVE_FILESTORE=$(gcloud filestore instances list --project "${PROJECT_ID}" | tail -n +2 2>/dev/null)
-if [[ -n "$ACTIVE_FILESTORE" ]]; then
-	echo "Deleting filestore instances"
-	while read -r row; do
-		# get first two columns: INSTANCE_NAME and LOCATION
-		read -ra cols <<<"$row"
-		echo "Disabling deletion protection for ${cols[0]} at ${cols[1]}"
-		gcloud --project "${PROJECT_ID}" filestore instances update "${cols[0]}" --location="${cols[1]}" --no-deletion-protection --quiet || true
-		echo "Deleting ${cols[0]} at ${cols[1]}"
-		gcloud --project "${PROJECT_ID}" filestore instances delete --force --quiet --location="${cols[1]}" "${cols[0]}"
-	done <<<"$ACTIVE_FILESTORE"
+CLEANUP_AGE_SECONDS=$((24 * 60 * 60))
+CURRENT_TIME=$(date +%s)
+KEPT_ACTIVE_INSTANCE=false
+
+echo "=========================================================="
+echo "Starting Filestore & Peering Cleanup: ${PROJECT_ID}"
+echo "DRY_RUN Mode : ${DRY_RUN}"
+if [ "$DRY_RUN" = "true" ]; then
+	echo ">> (SIMULATION ONLY: No resources will actually be deleted) <<"
+fi
+echo "=========================================================="
+
+# =================================================================
+# 1. FILESTORE INSTANCES CLEANUP
+# =================================================================
+# Fetch full resource path and createTime
+FILESTORE_INSTANCES=$(gcloud filestore instances list \
+	--project "${PROJECT_ID}" \
+	--format="value(name,createTime)" 2>/dev/null || true)
+
+if [[ -n "$FILESTORE_INSTANCES" ]]; then
+	while read -r full_name create_time; do
+		[[ -z "$full_name" ]] && continue
+
+		# Correctly parse instance name and location from full URI:
+		# projects/<proj>/locations/<location>/instances/<instance>
+		instance=$(basename "${full_name}")
+		location=$(echo "${full_name}" | cut -d/ -f4)
+
+		create_time_seconds=$(date -d "$create_time" +%s 2>/dev/null || echo 0)
+		age_seconds=$((CURRENT_TIME - create_time_seconds))
+		age_hours=$((age_seconds / 3600))
+
+		echo ""
+		echo "----------------------------------------------------"
+		echo "Filestore : ${instance}"
+		echo "Location  : ${location}"
+		echo "Created   : ${create_time} (${age_hours} hours old)"
+
+		# -------------------------------------------------------------
+		# RULE 1: If 24 hours or older -> Delete immediately
+		# -------------------------------------------------------------
+		if (( age_seconds >= CLEANUP_AGE_SECONDS )); then
+			echo "Condition : 24 hours or older."
+			if [ "$DRY_RUN" = "true" ]; then
+				echo "[DRY-RUN] Would delete ${instance} at ${location}."
+				continue
+			else
+				echo "Action    : DELETING ${instance} (abandoned orphan)..."
+			fi
+
+		# -------------------------------------------------------------
+		# RULE 2: If less than 24 hours -> Check for active test builds
+		# -------------------------------------------------------------
+		else
+			echo "Condition : Less than 24 hours old."
+			echo "Checking for active Filestore Cloud Builds..."
+
+			active_builds=$(gcloud builds list \
+				--project "${PROJECT_ID}" \
+				--filter="tags=m.filestore" \
+				--format="value(id)" \
+				--ongoing 2>/dev/null || true)
+
+			if [[ -n "$active_builds" ]]; then
+				echo "Result    : Active Filestore Cloud Build found ($active_builds)."
+				echo "Decision  : KEEPING ${instance} (active test is using it)."
+				KEPT_ACTIVE_INSTANCE=true
+				continue
+			else
+				echo "Result    : No active Filestore Cloud Builds found."
+				if [ "$DRY_RUN" = "true" ]; then
+					echo "[DRY-RUN] Would delete ${instance} at ${location} (no active build)."
+					continue
+				else
+					echo "Action    : DELETING ${instance} (leaked by finished/failed test)..."
+				fi
+			fi
+		fi
+
+		# -------------------------------------------------------------
+		# EXECUTE DELETION (Only runs when DRY_RUN=false)
+		# -------------------------------------------------------------
+		echo "Disabling deletion protection for ${instance} at ${location}..."
+		gcloud --project "${PROJECT_ID}" \
+			filestore instances update "${instance}" \
+			--location="${location}" \
+			--no-deletion-protection \
+			--quiet || true
+
+		echo "Deleting ${instance} at ${location}..."
+		gcloud --project "${PROJECT_ID}" \
+			filestore instances delete \
+			--force \
+			--quiet \
+			--location="${location}" \
+			"${instance}"
+
+		echo "Successfully deleted ${instance}."
+	done <<<"$FILESTORE_INSTANCES"
+else
+	echo "No Filestore instances found in project."
 fi
 
-# See https://cloud.google.com/filestore/docs/troubleshooting#system_limit_for_internal_resources_has_been_reached_error_when_creating_an_instance
-echo "Disabling Filestore API..."
-trap enable_filestore_api EXIT
-gcloud services disable file.googleapis.com --force --project "${PROJECT_ID}"
-echo "Sleeping for 2 minutes for internal limits to fully reset..."
-sleep 120
+# =================================================================
+# 2. SAFE NETWORK PEERING CLEANUP
+# =================================================================
+echo ""
+echo "=========================================================="
+echo "Checking network peerings..."
+echo "=========================================================="
 
-echo "Deleting all Filestore peering networks"
-# the output of this command matches
-# filestore-peer-426414172628;filestore-peer-646290499454 default
-peerings=$(gcloud compute networks peerings list --project "${PROJECT_ID}" --format="value(peerings.name,name)")
-while read -r peering; do
-	# split the output into:
-	# 0: a semi-colon separated list of peerings
-	# 1: the name of a VPC network
-	read -ra parr <<<"$peering"
-	# split the list of peerings into an array
-	IFS=";" read -ra peers <<<"${parr[0]}"
-	# capture the VPC network
-	network=${parr[1]}
+# Flatten nested peerings list so each peering outputs: <peering_name> <network_name>
+peerings=$(gcloud compute networks peerings list \
+	--project "${PROJECT_ID}" \
+	--flatten="peerings[]" \
+	--format="value(peerings.name,name)" 2>/dev/null || true)
 
-	for peer in "${peers[@]}"; do
-		if [[ "$peer" =~ ^filestore-peer-[0-9]+$ ]]; then
-			echo "Deleting $peer from $network"
-			gcloud --project "${PROJECT_ID}" compute networks peerings delete --network "$network" "$peer"
+found_filestore_peerings=false
+
+if [[ -n "$peerings" ]]; then
+	while read -r peering network; do
+		[[ -z "$peering" ]] && continue
+
+		# Only clean up Filestore peerings
+		if [[ "$peering" =~ ^filestore-peer-[0-9]+$ ]]; then
+			found_filestore_peerings=true
+			echo ""
+			echo "----------------------------------------------------"
+			echo "Peering   : ${peering}"
+			echo "Network   : ${network}"
+
+			# Get creation time from Cloud Audit Logs
+			creation_time=$(gcloud logging read \
+				"protoPayload.methodName=~\"compute.networks.addPeering\" AND protoPayload.request.networkPeering.name=\"${peering}\"" \
+				--project="${PROJECT_ID}" \
+				--format="value(timestamp)" \
+				--limit=1 2>/dev/null || true)
+
+			# If creation time cannot be determined
+			if [[ -z "$creation_time" ]]; then
+				echo "Creation time for ${peering} could not be determined."
+				if [ "$KEPT_ACTIVE_INSTANCE" = true ]; then
+					echo "Decision  : KEEPING peering for safety (active instance detected)."
+					continue
+				fi
+			fi
+
+			creation_seconds=$(date -d "$creation_time" +%s 2>/dev/null || echo "")
+
+			if [[ -n "$creation_seconds" ]]; then
+				age_seconds=$((CURRENT_TIME - creation_seconds))
+				age_hours=$((age_seconds / 3600))
+				echo "Created   : ${creation_time} (${age_hours} hours old)"
+			else
+				age_seconds=-1
+				echo "Created   : Unknown"
+			fi
+
+			# ---------------------------------------------------------
+			# RULE 1: If 24 hours or older -> Delete immediately
+			# ---------------------------------------------------------
+			if (( age_seconds >= CLEANUP_AGE_SECONDS )); then
+				echo "Condition : 24 hours or older."
+				if [ "$DRY_RUN" = "true" ]; then
+					echo "[DRY-RUN] Would delete dangling peering ${peering} from ${network}."
+					continue
+				else
+					echo "Action    : DELETING dangling peering ${peering} from ${network}..."
+				fi
+
+			# ---------------------------------------------------------
+			# RULE 2: If less than 24 hours -> Check active test builds
+			# ---------------------------------------------------------
+			else
+				echo "Condition : Less than 24 hours old (or unknown age)."
+				echo "Checking for active Filestore Cloud Builds..."
+
+				active_builds=$(gcloud builds list \
+					--project "${PROJECT_ID}" \
+					--filter="tags=m.filestore" \
+					--format="value(id)" \
+					--ongoing 2>/dev/null || true)
+
+				if [[ -n "$active_builds" ]] || [ "$KEPT_ACTIVE_INSTANCE" = true ]; then
+					echo "Result    : Active Filestore Cloud Build or instance found."
+					echo "Decision  : KEEPING peering ${peering} (active test is using it)."
+					continue
+				else
+					echo "Result    : No active Filestore Cloud Builds found."
+					if [ "$DRY_RUN" = "true" ]; then
+						echo "[DRY-RUN] Would delete peering ${peering} from ${network} (no active build)."
+						continue
+					else
+						echo "Action    : DELETING dangling peering ${peering} from ${network}..."
+					fi
+				fi
+			fi
+
+			# ---------------------------------------------------------
+			# EXECUTE PEERING DELETION (Only runs when DRY_RUN=false)
+			# ---------------------------------------------------------
+			gcloud compute networks peerings delete \
+				--project "${PROJECT_ID}" \
+				--network "${network}" \
+				"${peering}" \
+				--quiet || true
+
+			echo "Successfully deleted peering ${peering}."
 		fi
-	done
-done <<<"$peerings"
+	done <<<"$peerings"
+fi
 
+if [ "$found_filestore_peerings" = false ]; then
+	echo "No dangling filestore-peer-* connections found in project."
+fi
+
+echo ""
+echo "=========================================================="
+echo "Filestore & Peering cleanup completed successfully."
+echo "=========================================================="
 exit 0
