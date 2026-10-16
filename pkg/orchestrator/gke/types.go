@@ -194,6 +194,8 @@ type GKEOrchestrator struct {
 	// kubeconfigLoader reads the merged kubeconfig. nil means the default
 	// client-go loading rules (KUBECONFIG env or ~/.kube/config).
 	kubeconfigLoader kubeconfigLoader
+	// kubeContext is the context set by configureKubectl; all kubectl and dynamic-client calls use it.
+	kubeContext string
 }
 
 // Types for GetClusterInfo unmarshaling
@@ -567,6 +569,18 @@ type JobSetStatus struct {
 	} `json:"status"`
 }
 
+type jobSetInfo struct {
+	terminalState string
+	suspended     bool
+	firstJob      string
+	expectedPods  int
+	queried       bool
+}
+
+func (info jobSetInfo) terminal() bool {
+	return info.terminalState == "Completed" || info.terminalState == "Failed"
+}
+
 type ContainerData struct {
 	Name          string
 	ResourcesYAML string
@@ -592,6 +606,7 @@ type jobSetTemplateData struct {
 	NumSlices                     int
 	NodesPerSlice                 int
 	WorkerBackoffLimit            int
+	WorkerBackoffLimitPerIndex    int
 	PathwaysInstanceType          string
 	CommandToRun                  string
 	ResourcesString               string

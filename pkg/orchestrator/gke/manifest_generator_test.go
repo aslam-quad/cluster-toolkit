@@ -30,7 +30,10 @@ import (
 	"hpc-toolkit/pkg/orchestrator"
 	"hpc-toolkit/pkg/shell"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	k8syaml "sigs.k8s.io/yaml"
 )
 
@@ -1735,6 +1738,7 @@ func TestGeneratePathwaysManifest(t *testing.T) {
 			WorkerImage:      "worker:latest",
 			GCSLocation:      "gs://my-bucket",
 			HeadNodePool:     "pathways-np",
+			MaxSliceRestarts: 4000,
 		},
 	}
 
@@ -1773,7 +1777,6 @@ func TestGeneratePathwaysManifest(t *testing.T) {
 		"restartStrategy: BlockingRecreate",
 		"privileged: true",
 		"alpha.jobset.sigs.k8s.io/exclusive-topology: cloud.google.com/gke-nodepool",
-		`cpu: "24"`,
 		`cpu: "2"`,
 		`memory: "8Gi"`,
 		`kill -TERM -- \"-$child\"`,
@@ -1795,6 +1798,97 @@ func TestGeneratePathwaysManifest(t *testing.T) {
 		if !strings.Contains(manifest, substr) {
 			t.Errorf("manifest missing expected substring %q", substr)
 		}
+	}
+}
+
+func TestGeneratePathwaysManifest_HeadContainerResources(t *testing.T) {
+	type wantResources struct {
+		limits   corev1.ResourceList
+		requests corev1.ResourceList
+	}
+
+	tests := []struct {
+		name           string
+		headless       bool
+		wantContainers map[string]wantResources
+	}{
+		{
+			name:     "default with workload-container",
+			headless: false,
+			wantContainers: map[string]wantResources{
+				"pathways-proxy": {
+					limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("16"),
+						corev1.ResourceMemory: resource.MustParse("100Gi"),
+					},
+				},
+				"pathways-rm": {
+					limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("8"),
+						corev1.ResourceMemory: resource.MustParse("32Gi"),
+					},
+				},
+				"workload-container": {
+					limits: nil,
+					requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("2"),
+						corev1.ResourceMemory: resource.MustParse("8Gi"),
+					},
+				},
+			},
+		},
+		{
+			name:     "headless",
+			headless: true,
+			wantContainers: map[string]wantResources{
+				"pathways-proxy": {
+					limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("16"),
+						corev1.ResourceMemory: resource.MustParse("100Gi"),
+					},
+				},
+				"pathways-rm": {
+					limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("8"),
+						corev1.ResourceMemory: resource.MustParse("32Gi"),
+					},
+				},
+			},
+		},
+	}
+
+	quantityOpt := cmp.Comparer(func(x, y resource.Quantity) bool {
+		return x.Cmp(y) == 0
+	})
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := renderPathwaysShmTestManifest(t, tc.headless, "", nil)
+			specs := pathwaysPodSpecs(t, manifest)
+			head, ok := specs["pathways-head"]
+			if !ok {
+				t.Fatalf("pathways-head replicatedJob not found in manifest:\n%s", manifest)
+			}
+
+			containers := podContainers(head)
+			if len(containers) != len(tc.wantContainers) {
+				t.Fatalf("pathways-head container count = %d, want %d", len(containers), len(tc.wantContainers))
+			}
+
+			for _, c := range containers {
+				want, ok := tc.wantContainers[c.Name]
+				if !ok {
+					t.Errorf("unexpected container %q in pathways-head", c.Name)
+					continue
+				}
+				if diff := cmp.Diff(want.limits, c.Resources.Limits, quantityOpt, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("container %q limits mismatch (-want +got):\n%s", c.Name, diff)
+				}
+				if diff := cmp.Diff(want.requests, c.Resources.Requests, quantityOpt, cmpopts.EquateEmpty()); diff != "" {
+					t.Errorf("container %q requests mismatch (-want +got):\n%s", c.Name, diff)
+				}
+			}
+		})
 	}
 }
 
@@ -2137,5 +2231,99 @@ func TestGeneratePathwaysManifest_DefaultImages(t *testing.T) {
 	}
 	if !strings.Contains(manifest, defaultPathwaysServerImage) {
 		t.Errorf("manifest missing default server image %q", defaultPathwaysServerImage)
+	}
+}
+
+func TestGeneratePathwaysManifest_MaxSliceRestarts(t *testing.T) {
+	tests := []struct {
+		name                     string
+		maxSliceRestarts         int
+		wantBackoffLimit         string
+		wantBackoffLimitPerIndex string
+	}{
+		{
+			name:                     "flag set to 5 on 2 x v6e-32",
+			maxSliceRestarts:         5,
+			wantBackoffLimit:         "backoffLimit: 40",
+			wantBackoffLimitPerIndex: "backoffLimitPerIndex: 5",
+		},
+		{
+			name:                     "flag set to 0 on 2 x v6e-32",
+			maxSliceRestarts:         0,
+			wantBackoffLimit:         "backoffLimit: 0",
+			wantBackoffLimitPerIndex: "backoffLimitPerIndex: 0",
+		},
+		{
+			name:                     "default 4000 on 2 x v6e-32",
+			maxSliceRestarts:         4000,
+			wantBackoffLimit:         "backoffLimit: 32000",
+			wantBackoffLimitPerIndex: "backoffLimitPerIndex: 4000",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			setupMockMachineConfig(t)
+			job := orchestrator.JobDefinition{
+				WorkloadName:    "pathways-restarts-test",
+				CommandToRun:    "python3 train.py",
+				NumSlices:       2,
+				ClusterLocation: "us-central1-a",
+				ComputeType:     "v6e-32",
+				IsPathwaysJob:   true,
+				Pathways: orchestrator.PathwaysJobDefinition{
+					ProxyServerImage: "proxy:latest",
+					ServerImage:      "server:latest",
+					WorkerImage:      "worker:latest",
+					GCSLocation:      "gs://my-bucket",
+					HeadNodePool:     "pathways-np",
+					MaxSliceRestarts: tc.maxSliceRestarts,
+				},
+			}
+
+			mockResponses := map[string][]shell.CommandResult{
+				"kubectl get resourceflavors":                   {{ExitCode: 0, Stdout: ""}},
+				"kubectl get nodes":                             {{ExitCode: 0, Stdout: "4x8\n"}},
+				"kubectl get topologies.kueue.x-k8s.io -o json": {{ExitCode: 0, Stdout: `{"items":[]}`}},
+				"gcloud compute machine-types describe ct6e-standard-4t --zone=us-central1-a --format=json": {
+					{ExitCode: 0, Stdout: `{"accelerators": [{"guestAcceleratorCount": 4, "guestAcceleratorType": "tpu-v6e-slice"}]}`},
+				},
+			}
+			orc := newTestGKEOrchestrator(NewMockExecutor(mockResponses))
+			orc.projectID = "mock-project"
+			orc.clusterZones = []string{"us-central1-a"}
+			orc.clusterDesc.NodePools = []gkeJobNodePool{
+				{
+					Name:            "v6e-pool",
+					Config:          gkeNodePoolConfig{MachineType: "ct6e-standard-4t"},
+					PlacementPolicy: &gkePlacementPolicy{TpuTopology: "4x8"},
+				},
+			}
+
+			profile, isDynamic, isStatic, err := orc.resolveHardwareRequirements(&job)
+			if err != nil {
+				t.Fatalf("resolveHardwareRequirements failed: %v", err)
+			}
+			if job.NodesPerSlice != 8 {
+				t.Fatalf("expected NodesPerSlice = 8 for v6e-32, got %d", job.NodesPerSlice)
+			}
+
+			manifest, err := orc.GeneratePathwaysManifest(job, "test-image:latest", profile, isDynamic, isStatic)
+			if err != nil {
+				t.Fatalf("GeneratePathwaysManifest failed: %v", err)
+			}
+
+			parts := strings.Split(manifest, "name: worker")
+			if len(parts) < 2 {
+				t.Fatalf("worker replicatedJob not found in manifest:\n%s", manifest)
+			}
+			workerManifest := parts[1]
+			if !strings.Contains(workerManifest, tc.wantBackoffLimit) {
+				t.Errorf("worker spec missing %q\nGot:\n%s", tc.wantBackoffLimit, workerManifest)
+			}
+			if !strings.Contains(workerManifest, tc.wantBackoffLimitPerIndex) {
+				t.Errorf("worker spec missing %q\nGot:\n%s", tc.wantBackoffLimitPerIndex, workerManifest)
+			}
+		})
 	}
 }
