@@ -102,8 +102,6 @@ steps:
               value: "gs://hpc-ctk1357/mlgkeoptions.txt"
             - name: ENABLE_SPOT_FALLBACK
               value: "true"
-            - name: EXCLUDE_ZONES
-              value: "us-west1-c"
             - name: ANSIBLE_HOST_KEY_CHECKING
               value: "false"
             - name: ANSIBLE_CONFIG
