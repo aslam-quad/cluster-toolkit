@@ -234,20 +234,22 @@ func (g *GKEOrchestrator) createDefaultQueues(localQueueName, ns string) error {
 	return nil
 }
 
-// ensureClusterQueueCoverage checks if the parent ClusterQueue covers CPU and Memory quotas, updating it if empty.
-func (g *GKEOrchestrator) ensureClusterQueueCoverage(localQueueName, ns string) error {
-	cqName, err := g.getClusterQueueName(localQueueName, ns)
+// ensureClusterQueueCoverage checks if the parent ClusterQueue covers CPU and Memory quotas, updating it if empty,
+// and verifies a compatible ResourceFlavor exists for Pathways head pods when headNodePool is specified.
+func (g *GKEOrchestrator) ensureClusterQueueCoverage(localQueueName, ns, headNodePool string) error {
+	cqName, cq, hasCoverage, isEmpty, err := g.inspectQueueCoverage(localQueueName, ns)
 	if err != nil {
 		return err
 	}
-
-	hasCoverage, isEmpty, err := g.checkClusterQueueCoverage(cqName)
-	if err != nil {
-		return err
+	if cq == nil {
+		return nil
 	}
 
 	if hasCoverage {
 		logging.Info("Kueue ClusterQueue '%s' already covers CPU and Memory.", cqName)
+		if headNodePool != "" {
+			return g.validatePathwaysHeadFlavor(cqName, cq, headNodePool)
+		}
 		return nil
 	}
 
@@ -266,9 +268,45 @@ func (g *GKEOrchestrator) ensureClusterQueueCoverage(localQueueName, ns string) 
 	return fmt.Errorf("ClusterQueue '%s' does not cover required resources (CPU and Memory); please configure it manually to include quotas for 'cpu' and 'memory' resources", cqName)
 }
 
+func (g *GKEOrchestrator) inspectQueueCoverage(localQueueName, ns string) (string, *kueueClusterQueue, bool, bool, error) {
+	cqName, err := g.getClusterQueueName(localQueueName, ns)
+	if err != nil {
+		if k8s.IsForbiddenError(err) {
+			logging.Warn("Insufficient RBAC permissions to read LocalQueue %q in namespace %q (403 Forbidden). Skipping Kueue queue validation.", localQueueName, ns)
+			return "", nil, true, false, nil
+		}
+		return "", nil, false, false, err
+	}
+
+	cq, hasCoverage, isEmpty, err := g.checkClusterQueueCoverage(cqName)
+	if err != nil {
+		return "", nil, false, false, err
+	}
+	return cqName, cq, hasCoverage, isEmpty, nil
+}
+
+// validatePathwaysHeadQueue performs a read-only preflight check ensuring the target queue can admit
+// Pathways head pods on headNodePool without mutating cluster Kueue resources.
+func (g *GKEOrchestrator) validatePathwaysHeadQueue(localQueueName, ns, headNodePool string) error {
+	cqName, cq, hasCoverage, isEmpty, err := g.inspectQueueCoverage(localQueueName, ns)
+	if err != nil {
+		return err
+	}
+	if cq == nil {
+		return nil
+	}
+	if isEmpty || !hasCoverage {
+		return fmt.Errorf("ClusterQueue %q (bound by LocalQueue %q in namespace %q) does not define CPU and Memory resource coverage for Pathways head pods on node pool %q", cqName, localQueueName, ns, headNodePool)
+	}
+	if headNodePool == "" {
+		return nil
+	}
+	return g.validatePathwaysHeadFlavor(cqName, cq, headNodePool)
+}
+
 // getClusterQueueName inspects a LocalQueue to retrieve the name of its bound ClusterQueue.
 func (g *GKEOrchestrator) getClusterQueueName(localQueueName, ns string) (string, error) {
-	res := g.kubectl("get", "localqueue", localQueueName, "-n", ns, "-o", "jsonpath={.spec.clusterQueue}")
+	res := g.kubectl("get", "localqueue", localQueueName, "-n", ns, "-o", "jsonpath={.spec.clusterQueue}", kubectlReadTimeout)
 	if res.ExitCode != 0 {
 		return "", fmt.Errorf("failed to find clusterqueue for %s in namespace %s: %s", localQueueName, ns, res.Stderr)
 	}
@@ -280,58 +318,184 @@ func (g *GKEOrchestrator) getClusterQueueName(localQueueName, ns string) (string
 }
 
 // checkClusterQueueCoverage inspects a ClusterQueue to verify if resourceGroups cover CPU and Memory.
-func (g *GKEOrchestrator) checkClusterQueueCoverage(cqName string) (bool, bool, error) {
-	res := g.kubectl("get", "clusterqueue", cqName, "-o", "json")
+func (g *GKEOrchestrator) checkClusterQueueCoverage(cqName string) (*kueueClusterQueue, bool, bool, error) {
+	res := g.kubectl("get", "clusterqueue", cqName, "-o", "json", kubectlReadTimeout)
 	if res.ExitCode != 0 {
-		errStr := strings.ToLower(res.Stderr)
-		if strings.Contains(errStr, "forbidden") {
+		if k8s.IsForbiddenError(errors.New(res.Stderr)) {
 			logging.Warn("Insufficient RBAC permissions to read ClusterQueue %q (403 Forbidden). Skipping resource coverage validation.", cqName)
-			return true, false, nil
+			return nil, true, false, nil
 		}
-		return false, false, fmt.Errorf("failed to get clusterqueue %s: %s", cqName, res.Stderr)
+		return nil, false, false, fmt.Errorf("failed to get clusterqueue %s: %s", cqName, res.Stderr)
 	}
 
-	var cq map[string]interface{}
+	var cq kueueClusterQueue
 	if err := json.Unmarshal([]byte(res.Stdout), &cq); err != nil {
-		return false, false, fmt.Errorf("failed to parse clusterqueue %s JSON: %w", cqName, err)
+		return nil, false, false, fmt.Errorf("failed to parse clusterqueue %s JSON: %w", cqName, err)
 	}
 
-	spec, ok := cq["spec"].(map[string]interface{})
-	if !ok {
-		return false, true, nil
-	}
-	rgList, ok := spec["resourceGroups"].([]interface{})
-	if !ok || len(rgList) == 0 {
-		return false, true, nil
+	if len(cq.Spec.ResourceGroups) == 0 {
+		return &cq, false, true, nil
 	}
 
-	return g.hasRequiredResources(rgList), false, nil
+	return &cq, g.hasRequiredResources(&cq), false, nil
 }
 
-// hasRequiredResources helper checks if resourceGroups list includes both CPU and Memory covered resources.
-func (g *GKEOrchestrator) hasRequiredResources(rgList []interface{}) bool {
+// hasRequiredResources helper checks if ClusterQueue resourceGroups include both CPU and Memory covered resources.
+func (g *GKEOrchestrator) hasRequiredResources(cq *kueueClusterQueue) bool {
 	hasCPU := false
 	hasMem := false
-	for _, rgItem := range rgList {
-		rg, ok := rgItem.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if covered, ok := rg["coveredResources"].([]interface{}); ok {
-			for _, r := range covered {
-				if rStr, ok := r.(string); ok {
-					switch rStr {
-					case "cpu":
-						hasCPU = true
-					case "memory":
-						hasMem = true
-					}
-				}
+	for _, rg := range cq.Spec.ResourceGroups {
+		for _, r := range rg.CoveredResources {
+			switch r {
+			case "cpu":
+				hasCPU = true
+			case "memory":
+				hasMem = true
 			}
 		}
 	}
-
 	return hasCPU && hasMem
+}
+
+func (g *GKEOrchestrator) listResourceFlavors() (map[string]kueueResourceFlavor, error) {
+	res := g.kubectl("get", "resourceflavor", "-o", "json", kubectlReadTimeout)
+	if res.ExitCode != 0 {
+		err := fmt.Errorf("failed to list resourceflavors: %s", res.Stderr)
+		if k8s.IsForbiddenError(err) {
+			logging.Warn("Insufficient RBAC permissions to list ResourceFlavors (403 Forbidden). Skipping Pathways ResourceFlavor validation.")
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var rfList kueueResourceFlavorList
+	if err := json.Unmarshal([]byte(res.Stdout), &rfList); err != nil {
+		return nil, fmt.Errorf("failed to parse resourceflavor list JSON: %w", err)
+	}
+
+	flavors := make(map[string]kueueResourceFlavor, len(rfList.Items))
+	for _, rf := range rfList.Items {
+		flavors[rf.Metadata.Name] = rf
+	}
+	return flavors, nil
+}
+
+func (g *GKEOrchestrator) validatePathwaysHeadFlavor(cqName string, cq *kueueClusterQueue, headNodePool string) error {
+	flavors, err := g.listResourceFlavors()
+	if err != nil {
+		return err
+	}
+	if flavors == nil {
+		return nil
+	}
+
+	for _, rg := range cq.Spec.ResourceGroups {
+		if !rgCoversCPUOrMem(rg) {
+			continue
+		}
+		if reason := findCompatibleHeadFlavor(rg, flavors, headNodePool); reason != "" {
+			return fmt.Errorf(
+				"Kueue ClusterQueue %q has no ResourceFlavor able to admit Pathways head pods for node pool %q in resourceGroup %v (%s). "+
+					"If 'pathways-flavor' is pinned to another node pool (for example, via nodeLabels.%s), make it node-pool agnostic with `%s` or add a matching ResourceFlavor to ClusterQueue %q",
+				cqName, headNodePool, rg.CoveredResources, reason, nodePoolLabel,
+				kubectlCommandLine(g.kubeContext, "patch", "resourceflavor", "pathways-flavor", "--type=merge", "-p", `{"spec":{"nodeLabels":null}}`),
+				cqName,
+			)
+		}
+	}
+	return nil
+}
+
+func rgCoversCPUOrMem(rg kueueResourceGroup) bool {
+	return slices.Contains(rg.CoveredResources, "cpu") || slices.Contains(rg.CoveredResources, "memory")
+}
+
+func findCompatibleHeadFlavor(rg kueueResourceGroup, flavors map[string]kueueResourceFlavor, headNodePool string) string {
+	needCPU := slices.Contains(rg.CoveredResources, "cpu")
+	needMem := slices.Contains(rg.CoveredResources, "memory")
+
+	var reasons []string
+	for _, fq := range rg.Flavors {
+		reason := checkFlavorForHeadPod(fq, flavors, headNodePool, needCPU, needMem)
+		if reason == "" {
+			return ""
+		}
+		reasons = append(reasons, fmt.Sprintf("%s (%s)", fq.Name, reason))
+	}
+	if len(reasons) == 0 {
+		return "no flavors defined in resourceGroup"
+	}
+	return strings.Join(reasons, "; ")
+}
+
+func checkFlavorForHeadPod(fq kueueFlavorQuotas, flavors map[string]kueueResourceFlavor, headNodePool string, needCPU, needMem bool) string {
+	rf, ok := flavors[fq.Name]
+	if !ok {
+		return "ResourceFlavor not found"
+	}
+	if reason := checkFlavorLabelsForHead(rf.Spec.NodeLabels, headNodePool); reason != "" {
+		return reason
+	}
+	if reason := checkFlavorTaintsForHead(rf.Spec.NodeTaints, rf.Spec.Tolerations); reason != "" {
+		return reason
+	}
+	if needCPU && !flavorHasPositiveQuota(fq.Resources, "cpu") {
+		return "missing positive cpu nominalQuota"
+	}
+	if needMem && !flavorHasPositiveQuota(fq.Resources, "memory") {
+		return "missing positive memory nominalQuota"
+	}
+	return ""
+}
+
+func checkFlavorLabelsForHead(labels map[string]string, headNodePool string) string {
+	if np, ok := labels[nodePoolLabel]; ok && np != headNodePool {
+		return fmt.Sprintf("%s=%s does not match head node pool %s", nodePoolLabel, np, headNodePool)
+	}
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		if isAcceleratorFlavorLabel(k) {
+			return fmt.Sprintf("targets accelerator label %s=%s", k, labels[k])
+		}
+	}
+	return ""
+}
+
+func isAcceleratorFlavorLabel(key string) bool {
+	return key == "cloud.google.com/gke-tpu-accelerator" ||
+		key == tpuTopologyLabel ||
+		key == "cloud.google.com/gke-accelerator" ||
+		strings.HasPrefix(key, "cloud.google.com/gke-tpu-") ||
+		strings.HasPrefix(key, "cloud.google.com/gke-gpu-")
+}
+
+func checkFlavorTaintsForHead(nodeTaints []gkeTaint, tolerations []kueueToleration) string {
+	for _, t := range nodeTaints {
+		if t.Effect != "NoSchedule" && t.Effect != "NoExecute" {
+			continue
+		}
+		if !kueueTolerationsCoverTaint(tolerations, t) {
+			return fmt.Sprintf("untolerated nodeTaint %s=%s:%s", t.Key, t.Value, t.Effect)
+		}
+	}
+	return ""
+}
+
+func kueueTolerationsCoverTaint(tolerations []kueueToleration, taint gkeTaint) bool {
+	for _, tol := range tolerations {
+		if tolerationFieldsMatchTaint(tol.Key, tol.Operator, tol.Value, tol.Effect, taint) {
+			return true
+		}
+	}
+	return false
+}
+
+func flavorHasPositiveQuota(resources []kueueResourceQuota, name string) bool {
+	for _, r := range resources {
+		if r.Name == name && r.NominalQuota.Sign() > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // -----------------------------------------------------------------------------

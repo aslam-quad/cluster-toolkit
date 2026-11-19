@@ -875,7 +875,7 @@ func (g *GKEOrchestrator) configureClusterEnvironment(job *orchestrator.JobDefin
 		return err
 	}
 	if job.IsPathwaysJob {
-		return g.ensureClusterQueueCoverage(localQueue, ns)
+		return g.ensureClusterQueueCoverage(localQueue, ns, job.Pathways.HeadNodePool)
 	}
 	return nil
 }
@@ -969,15 +969,10 @@ func (g *GKEOrchestrator) hasAccelerators(np *gkeJobNodePool, machineType, locat
 	return err == nil && len(cap.Accelerators) > 0
 }
 
-func tolerationMatchesTaint(tol map[string]interface{}, taint gkeTaint) bool {
-	effect, _ := tol["effect"].(string)
+func tolerationFieldsMatchTaint(key, op, val, effect string, taint gkeTaint) bool {
 	if effect != "" && effect != taint.Effect {
 		return false
 	}
-	op, _ := tol["operator"].(string)
-	key, _ := tol["key"].(string)
-	val, _ := tol["value"].(string)
-
 	switch op {
 	case "Exists":
 		return key == "" || key == taint.Key
@@ -986,6 +981,14 @@ func tolerationMatchesTaint(tol map[string]interface{}, taint gkeTaint) bool {
 	default:
 		return false
 	}
+}
+
+func tolerationMatchesTaint(tol map[string]interface{}, taint gkeTaint) bool {
+	effect, _ := tol["effect"].(string)
+	op, _ := tol["operator"].(string)
+	key, _ := tol["key"].(string)
+	val, _ := tol["value"].(string)
+	return tolerationFieldsMatchTaint(key, op, val, effect, taint)
 }
 
 func tolerationsCoverTaint(rawTolerations []interface{}, taint gkeTaint) bool {

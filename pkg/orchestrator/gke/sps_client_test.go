@@ -15,11 +15,16 @@
 package gke
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"hpc-toolkit/pkg/orchestrator"
 	"hpc-toolkit/pkg/shell"
+
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const testSPSJobSetJSON = `{
@@ -639,6 +644,160 @@ func TestResolveSPSClientPathways(t *testing.T) {
 		_, err := resolveSPSClientPathways(orchestrator.PathwaysJobDefinition{}, inst)
 		if err == nil || !strings.Contains(err.Error(), "pass --pathways-gcs-location") {
 			t.Errorf("got err = %v, want --pathways-gcs-location error", err)
+		}
+	})
+}
+
+func newSPSPreflightTestOrchestrator(t *testing.T, rfOut string) (*GKEOrchestrator, *MockExecutor) {
+	t.Helper()
+	setupMockMachineConfig(t)
+
+	spsJobSetOnPathwaysNP := strings.ReplaceAll(testSPSJobSetJSON, `"cpu-np"`, `"pathways-np"`)
+	const getJobSetCmd = "kubectl get jobset sps-j6080103 -n default -o json --request-timeout=10s"
+	const getHeadPodsCmd = "kubectl get pods -n default -l jobset.sigs.k8s.io/jobset-name=sps-j6080103,jobset.sigs.k8s.io/replicatedjob-name=pathways-head -o jsonpath={.items[*].status.phase} --request-timeout=10s"
+	const getLQCmd = "kubectl get localqueue cluster-queue -n default -o jsonpath={.spec.clusterQueue} --request-timeout=10s"
+	const getCQCmd = "kubectl get clusterqueue cluster-queue -o json --request-timeout=10s"
+	const getRFCmd = "kubectl get resourceflavor -o json --request-timeout=10s"
+	validCQ := `{"spec":{"resourceGroups":[{"coveredResources":["cpu","memory"],"flavors":[{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"64"},{"name":"memory","nominalQuota":"256Gi"}]}]}]}}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"v1","kind":"List","items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	mockExec := NewMockExecutor(map[string][]shell.CommandResult{
+		"gcloud container clusters get-credentials":       {{ExitCode: 0}},
+		"kubectl get --raw /version --request-timeout=5s": {{ExitCode: 0}},
+		getJobSetCmd:   {{ExitCode: 0, Stdout: spsJobSetOnPathwaysNP}},
+		getHeadPodsCmd: {{ExitCode: 0, Stdout: "Running"}},
+		getLQCmd:       {{ExitCode: 0, Stdout: "cluster-queue"}},
+		getCQCmd:       {{ExitCode: 0, Stdout: validCQ}},
+		getRFCmd:       {{ExitCode: 0, Stdout: rfOut}},
+	})
+	orc := newTestGKEOrchestrator(mockExec)
+	orc.clusterDesc = gkeCluster{
+		NodePools: []gkeJobNodePool{
+			{Name: "cpu-np", InitialNodeCount: 1, Config: gkeNodePoolConfig{MachineType: "n4-standard-64"}},
+			{Name: "pathways-np", InitialNodeCount: 1, Config: gkeNodePoolConfig{MachineType: "n2-standard-64"}},
+		},
+	}
+	orc.kubeconfigLoader = func() (*clientcmdapi.Config, error) {
+		return &clientcmdapi.Config{
+			CurrentContext: "gke_test-project_us-central1-a_test-cluster",
+			Contexts: map[string]*clientcmdapi.Context{
+				"gke_test-project_us-central1-a_test-cluster": {Cluster: "test-cluster"},
+			},
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"test-cluster": {Server: srv.URL},
+			},
+		}, nil
+	}
+	return orc, mockExec
+}
+
+func assertNoKubectlApply(t *testing.T, calls []string) {
+	t.Helper()
+	for _, c := range calls {
+		if strings.Contains(c, "apply") {
+			t.Errorf("unexpected kubectl apply after failed preflight: %s", c)
+		}
+	}
+}
+
+func TestRunSPSWorkload_PathwaysHeadQueuePreflight(t *testing.T) {
+	pinnedRF := `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeLabels":{"cloud.google.com/gke-nodepool":"cpu-np"}}}]}`
+
+	cases := []struct {
+		name      string
+		imageName string
+	}{
+		{name: "local SPS workload fails fast when pathways-flavor pinned to cpu-np"},
+		{name: "in-cluster SPS workload fails fast when pathways-flavor pinned to cpu-np", imageName: "us-docker.pkg.dev/p/img:v1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orc, mockExec := newSPSPreflightTestOrchestrator(t, pinnedRF)
+			err := orc.runSPSWorkload(orchestrator.JobDefinition{
+				WorkloadName:    "sps-test",
+				ClusterName:     "test-cluster",
+				ClusterLocation: "us-central1-a",
+				ProjectID:       "test-project",
+				NumSlices:       1,
+				ImageName:       tc.imageName,
+				CommandToRun:    "echo hi",
+				Pathways:        orchestrator.PathwaysJobDefinition{RunSPSWorkload: "sps-j6080103", HeadNodePool: "pathways-np"},
+			})
+			if err == nil || !strings.Contains(err.Error(), "does not match head node pool pathways-np") {
+				t.Fatalf("got err = %v, want pathways-flavor mismatch error", err)
+			}
+			assertNoKubectlApply(t, mockExec.calls)
+		})
+	}
+}
+
+func TestRunSPSWorkload_PathwaysDryRunAndAgnosticPreflight(t *testing.T) {
+	pinnedRF := `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeLabels":{"cloud.google.com/gke-nodepool":"cpu-np"}}}]}`
+	agnosticRF := `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{}}]}`
+	const getCQCmd = "kubectl get clusterqueue cluster-queue -o json --request-timeout=10s"
+	const getRFCmd = "kubectl get resourceflavor -o json --request-timeout=10s"
+
+	t.Run("dry-run local SPS skips queue preflight", func(t *testing.T) {
+		orc, mockExec := newSPSPreflightTestOrchestrator(t, pinnedRF)
+		err := orc.runSPSWorkload(orchestrator.JobDefinition{
+			WorkloadName:    "sps-dry",
+			ClusterName:     "test-cluster",
+			ClusterLocation: "us-central1-a",
+			ProjectID:       "test-project",
+			NumSlices:       1,
+			CommandToRun:    "echo hi",
+			DryRunManifest:  filepath.Join(t.TempDir(), "sps-dry.yaml"),
+			Pathways:        orchestrator.PathwaysJobDefinition{RunSPSWorkload: "sps-j6080103", HeadNodePool: "pathways-np"},
+		})
+		if err != nil {
+			t.Fatalf("dry-run SPS failed: %v", err)
+		}
+		if mockExec.callCount[getCQCmd] != 0 || mockExec.callCount[getRFCmd] != 0 {
+			t.Errorf("dry-run should skip live Kueue queries, got CQ=%d RF=%d", mockExec.callCount[getCQCmd], mockExec.callCount[getRFCmd])
+		}
+	})
+
+	t.Run("agnostic pathways-flavor passes queue preflight", func(t *testing.T) {
+		orc, mockExec := newSPSPreflightTestOrchestrator(t, agnosticRF)
+		err := orc.runSPSWorkload(orchestrator.JobDefinition{
+			WorkloadName:    "sps-ok-preflight",
+			ClusterName:     "test-cluster",
+			ClusterLocation: "us-central1-a",
+			ProjectID:       "test-project",
+			NumSlices:       1,
+			CommandToRun:    "echo hi",
+			RawMounts:       []string{"gs://bkt;/data"},
+			Pathways:        orchestrator.PathwaysJobDefinition{RunSPSWorkload: "sps-j6080103", HeadNodePool: "pathways-np"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "--mount requires --image") {
+			t.Fatalf("expected preflight to pass and hit runSPSWorkloadLocally mount error, got: %v", err)
+		}
+		if mockExec.callCount[getRFCmd] != 1 {
+			t.Errorf("expected 1 get resourceflavor call from preflight, got %d", mockExec.callCount[getRFCmd])
+		}
+	})
+
+	t.Run("missing headNodePool fails node pool validation before Kueue preflight", func(t *testing.T) {
+		orc, mockExec := newSPSPreflightTestOrchestrator(t, agnosticRF)
+		err := orc.runSPSWorkload(orchestrator.JobDefinition{
+			WorkloadName:    "sps-bad-np",
+			ClusterName:     "test-cluster",
+			ClusterLocation: "us-central1-a",
+			ProjectID:       "test-project",
+			NumSlices:       1,
+			CommandToRun:    "echo hi",
+			Pathways:        orchestrator.PathwaysJobDefinition{RunSPSWorkload: "sps-j6080103", HeadNodePool: "does-not-exist"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "not found in cluster") {
+			t.Fatalf("expected node pool validation error, got: %v", err)
+		}
+		if mockExec.callCount[getCQCmd] != 0 {
+			t.Errorf("expected 0 ClusterQueue calls when node pool check fails, got %d", mockExec.callCount[getCQCmd])
 		}
 	})
 }

@@ -127,9 +127,11 @@ locals {
       ]
     )
   )
-  target_system_node_pool_zones = var.system_node_pool_machine_type != null ? toset([]) : local.candidate_zones
-  cpu_np_machine_type           = "n4-standard-64"
-  cpu_np_candidate_zones        = var.enable_pathways_for_tpus ? local.candidate_zones : toset([])
+  target_system_node_pool_zones   = var.system_node_pool_machine_type != null ? toset([]) : local.candidate_zones
+  confidential_machine_type_regex = "^(n2d-|c2d-|c3d?-|t2d-|g4-)"
+  default_cpu_np_machine_type     = var.enable_confidential_nodes ? "n2d-standard-64" : "n4-standard-64"
+  cpu_np_machine_type             = coalesce(var.pathways_cpu_node_pool_machine_type, local.default_cpu_np_machine_type)
+  cpu_np_candidate_zones          = var.enable_pathways_for_tpus ? local.candidate_zones : toset([])
   cpu_np_available_zones = sort([
     for z, m in data.google_compute_machine_types.available_cpu_np_machines :
     z if length(m.machine_types) > 0
@@ -507,18 +509,28 @@ resource "google_container_cluster" "gke_cluster" {
       error_message = "FQDN Network Policy requires GKE Dataplane V2 to be enabled."
     }
     precondition {
-      condition     = !var.enable_confidential_nodes || can(regex("^(n2d-|c2d-|c3d?-|t2d-|g4-)", local.system_node_pool_machine_type))
+      condition     = !var.enable_confidential_nodes || can(regex(local.confidential_machine_type_regex, local.system_node_pool_machine_type))
       error_message = "The system_node_pool_machine_type must be a confidential-compatible machine type (e.g., n2d, c2d, c3d, c3, t2d, g4) when enable_confidential_nodes is true."
     }
 
     precondition {
-      condition     = !(var.enable_confidential_nodes && var.enable_pathways_for_tpus)
-      error_message = "'enable_pathways_for_tpus' cannot be true when 'enable_confidential_nodes' is enabled because cpu-np uses '${local.cpu_np_machine_type}', which does not support Confidential VMs."
+      condition     = !var.enable_pathways_for_tpus || !var.enable_confidential_nodes || can(regex(local.confidential_machine_type_regex, local.cpu_np_machine_type))
+      error_message = "The Pathways CPU node pool machine type '${local.cpu_np_machine_type}' must be a confidential-compatible machine type (e.g., n2d, c2d, c3d, c3, t2d, g4) when enable_confidential_nodes is true."
+    }
+
+    precondition {
+      condition     = !var.enable_pathways_for_tpus || var.pathways_cpu_node_pool_total_max_nodes >= var.pathways_cpu_node_pool_total_min_nodes
+      error_message = "pathways_cpu_node_pool_total_max_nodes (${var.pathways_cpu_node_pool_total_max_nodes}) must be greater than or equal to pathways_cpu_node_pool_total_min_nodes (${var.pathways_cpu_node_pool_total_min_nodes})."
+    }
+
+    precondition {
+      condition     = !var.enable_pathways_for_tpus || !var.enable_confidential_storage || (var.boot_disk_kms_key != null && var.boot_disk_kms_key != "")
+      error_message = "A valid boot_disk_kms_key must be provided when enable_confidential_storage and enable_pathways_for_tpus are both true."
     }
 
     precondition {
       condition     = !var.enable_pathways_for_tpus || length(local.cpu_np_available_zones) > 0
-      error_message = "Machine type '${local.cpu_np_machine_type}' required for Pathways (cpu-np) is not available in target zone(s): ${length(local.cpu_np_candidate_zones) > 0 ? join(", ", sort(local.cpu_np_candidate_zones)) : "none specified"}. Choose a region or zone with '${local.cpu_np_machine_type}' support, update or unset 'system_node_pool_zones', or set 'enable_pathways_for_tpus' to false."
+      error_message = "Machine type '${local.cpu_np_machine_type}' required for Pathways (cpu-np) is not available in target zone(s): ${length(local.cpu_np_candidate_zones) > 0 ? join(", ", sort(local.cpu_np_candidate_zones)) : "none specified"}. Choose a region or zone with '${local.cpu_np_machine_type}' support, set 'pathways_cpu_node_pool_machine_type', update or unset 'system_node_pool_zones', or set 'enable_pathways_for_tpus' to false."
     }
   }
 
@@ -694,8 +706,8 @@ resource "google_container_node_pool" "cpu_np" {
   version        = local.master_version
 
   autoscaling {
-    total_min_node_count = 0
-    total_max_node_count = 100
+    total_min_node_count = var.pathways_cpu_node_pool_total_min_nodes
+    total_max_node_count = var.pathways_cpu_node_pool_total_max_nodes
   }
 
   management {
@@ -704,11 +716,22 @@ resource "google_container_node_pool" "cpu_np" {
   }
 
   node_config {
-    resource_labels = local.labels
-    service_account = var.service_account_email
-    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
-    machine_type    = local.cpu_np_machine_type
-    image_type      = var.system_node_pool_image_type
+    resource_labels             = local.labels
+    service_account             = var.service_account_email
+    oauth_scopes                = ["https://www.googleapis.com/auth/cloud-platform"]
+    machine_type                = local.cpu_np_machine_type
+    disk_type                   = var.enable_confidential_storage ? "hyperdisk-balanced" : null
+    enable_confidential_storage = var.enable_confidential_storage
+    boot_disk_kms_key           = var.enable_confidential_storage ? var.boot_disk_kms_key : null
+    image_type                  = var.system_node_pool_image_type
+
+    dynamic "confidential_nodes" {
+      for_each = var.enable_confidential_nodes ? [1] : []
+      content {
+        enabled                    = true
+        confidential_instance_type = var.confidential_instance_type
+      }
+    }
 
     shielded_instance_config {
       enable_secure_boot          = var.system_node_pool_enable_secure_boot

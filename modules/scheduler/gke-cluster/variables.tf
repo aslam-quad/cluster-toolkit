@@ -343,7 +343,7 @@ variable "system_node_pool_enable_secure_boot" {
 }
 
 variable "system_node_pool_zones" {
-  description = "The zones to use for the system node pool (and candidate zones for cpu-np when enable_pathways_for_tpus is true, filtered by n4-standard-64 availability). If not specified, the cluster default node zone(s) will be used."
+  description = "The zones to use for the system node pool (and candidate zones for cpu-np when enable_pathways_for_tpus is true, filtered by the resolved Pathways CPU node pool machine type availability). If not specified, the cluster default node zone(s) will be used."
   type        = list(string)
   default     = null
 }
@@ -654,9 +654,44 @@ variable "auto_monitoring_scope" {
 }
 
 variable "enable_pathways_for_tpus" {
-  description = "If true, deploys a dedicated CPU node pool (cpu-np) using n4-standard-64 instances across target zones where n4-standard-64 is available (fails if no target zone supports it or if enable_confidential_nodes is true)."
+  description = "If true, deploys a dedicated CPU node pool (cpu-np) for Pathways workloads across target zones where the configured machine type (default n4-standard-64, or n2d-standard-64 when enable_confidential_nodes is true) is available."
   type        = bool
   default     = false
+}
+
+variable "pathways_cpu_node_pool_machine_type" {
+  description = "Machine type for the Pathways CPU node pool (cpu-np) when enable_pathways_for_tpus is true. Defaults to n2d-standard-64 when enable_confidential_nodes is true, or n4-standard-64 otherwise."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.pathways_cpu_node_pool_machine_type == null ? true : can(regex("^[a-z][a-z0-9-]+$", var.pathways_cpu_node_pool_machine_type))
+    error_message = "pathways_cpu_node_pool_machine_type must be a valid GCE machine type name (lowercase letters, digits, hyphens) or null."
+  }
+}
+
+variable "pathways_cpu_node_pool_total_min_nodes" {
+  description = "Minimum total number of nodes in the Pathways CPU node pool (cpu-np) when enable_pathways_for_tpus is true."
+  type        = number
+  default     = 0
+  nullable    = false
+
+  validation {
+    condition     = var.pathways_cpu_node_pool_total_min_nodes >= 0 && floor(var.pathways_cpu_node_pool_total_min_nodes) == var.pathways_cpu_node_pool_total_min_nodes
+    error_message = "pathways_cpu_node_pool_total_min_nodes must be a non-negative integer (>= 0)."
+  }
+}
+
+variable "pathways_cpu_node_pool_total_max_nodes" {
+  description = "Maximum total number of nodes in the Pathways CPU node pool (cpu-np) when enable_pathways_for_tpus is true."
+  type        = number
+  default     = 100
+  nullable    = false
+
+  validation {
+    condition     = var.pathways_cpu_node_pool_total_max_nodes >= 1 && floor(var.pathways_cpu_node_pool_total_max_nodes) == var.pathways_cpu_node_pool_total_max_nodes
+    error_message = "pathways_cpu_node_pool_total_max_nodes must be a positive integer (>= 1)."
+  }
 }
 
 variable "enable_vertical_pod_autoscaling" {

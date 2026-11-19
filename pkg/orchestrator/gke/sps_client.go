@@ -161,32 +161,9 @@ func (g *GKEOrchestrator) readSPSInstance(ref, ns string) (spsInstance, error) {
 
 // runSPSWorkload runs job.CommandToRun on an existing SPS instance: on this machine when no image is given, in the cluster otherwise.
 func (g *GKEOrchestrator) runSPSWorkload(job orchestrator.JobDefinition) error {
-	logging.Info("Configuring kubectl for GKE cluster '%s'...", job.ClusterName)
-	if err := g.configureKubectl(job.ClusterName, job.ClusterLocation, job.ProjectID); err != nil {
-		return err
-	}
-	ns, err := g.getCurrentNamespace(job.ClusterName, job.ClusterLocation, job.ProjectID)
+	inst, ns, err := g.prepareAndPreflightSPSWorkload(&job)
 	if err != nil {
 		return err
-	}
-	inst, err := g.readSPSInstance(job.Pathways.RunSPSWorkload, ns)
-	if err != nil {
-		return err
-	}
-	if job.WorkloadName == inst.Name {
-		return fmt.Errorf("--name %q must differ from the target SPS instance %q", job.WorkloadName, inst.Name)
-	}
-	if inst.InstanceCount > 0 && job.NumSlices > inst.InstanceCount {
-		return fmt.Errorf("--num-slices %d is more than the %d slices of SPS instance %q", job.NumSlices, inst.InstanceCount, inst.Name)
-	}
-	if err := g.validateJobConflicts(job); err != nil {
-		return err
-	}
-	if job.KueueQueueName == "" {
-		job.KueueQueueName = inst.KueueQueueName
-	}
-	if inst.HeadNodePool == "" {
-		inst.HeadNodePool = g.autoDetectCPUNodePool()
 	}
 	logging.Info("Using SPS instance %s (%s): %d x %s", inst.Name, inst.Endpoint, inst.InstanceCount, inst.InstanceType)
 
@@ -194,6 +171,57 @@ func (g *GKEOrchestrator) runSPSWorkload(job orchestrator.JobDefinition) error {
 		return g.runSPSWorkloadLocally(job, inst, ns)
 	}
 	return g.submitSPSClusterWorkload(job, inst)
+}
+
+func (g *GKEOrchestrator) prepareAndPreflightSPSWorkload(job *orchestrator.JobDefinition) (spsInstance, string, error) {
+	logging.Info("Configuring kubectl for GKE cluster '%s'...", job.ClusterName)
+	if err := g.configureKubectl(job.ClusterName, job.ClusterLocation, job.ProjectID); err != nil {
+		return spsInstance{}, "", err
+	}
+	ns, err := g.getCurrentNamespace(job.ClusterName, job.ClusterLocation, job.ProjectID)
+	if err != nil {
+		return spsInstance{}, "", err
+	}
+	inst, err := g.readSPSInstance(job.Pathways.RunSPSWorkload, ns)
+	if err != nil {
+		return spsInstance{}, "", err
+	}
+	if err := validateSPSJobAgainstInstance(*job, inst); err != nil {
+		return spsInstance{}, "", err
+	}
+	if err := g.validateJobConflicts(*job); err != nil {
+		return spsInstance{}, "", err
+	}
+	if job.KueueQueueName == "" {
+		job.KueueQueueName = inst.KueueQueueName
+	}
+	if inst.HeadNodePool == "" {
+		inst.HeadNodePool = g.autoDetectCPUNodePool()
+	}
+	p, err := resolveSPSClientPathways(job.Pathways, inst)
+	if err != nil {
+		return spsInstance{}, "", err
+	}
+	job.Pathways = p
+	if err := g.validatePathwaysHeadNodePool(p.HeadNodePool, job.ClusterName); err != nil {
+		return spsInstance{}, "", err
+	}
+	if job.DryRunManifest == "" && job.KueueQueueName != "" {
+		if err := g.validatePathwaysHeadQueue(job.KueueQueueName, ns, p.HeadNodePool); err != nil {
+			return spsInstance{}, "", err
+		}
+	}
+	return inst, ns, nil
+}
+
+func validateSPSJobAgainstInstance(job orchestrator.JobDefinition, inst spsInstance) error {
+	if job.WorkloadName == inst.Name {
+		return fmt.Errorf("--name %q must differ from the target SPS instance %q", job.WorkloadName, inst.Name)
+	}
+	if inst.InstanceCount > 0 && job.NumSlices > inst.InstanceCount {
+		return fmt.Errorf("--num-slices %d is more than the %d slices of SPS instance %q", job.NumSlices, inst.InstanceCount, inst.Name)
+	}
+	return nil
 }
 
 func (g *GKEOrchestrator) submitSPSClusterWorkload(job orchestrator.JobDefinition, inst spsInstance) error {
