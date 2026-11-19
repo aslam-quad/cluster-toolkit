@@ -376,11 +376,14 @@ func (g *GKEOrchestrator) loadKubeconfig() (*clientcmdapi.Config, error) {
 }
 
 // kubectlCommandLine renders a kubectl command, pinned like the ones gcluster runs, for users to copy.
-// Arguments that contain whitespace, such as Windows paths, are double-quoted.
+// Arguments containing shell metacharacters (", {, }, ') are single-quoted so JSON patches remain
+// copy-pasteable in bash/zsh; arguments containing only whitespace (such as Windows paths) are double-quoted.
 func kubectlCommandLine(kubeContext string, args ...string) string {
 	parts := append([]string{"kubectl"}, k8s.WithContext(kubeContext, args)...)
 	for i, p := range parts {
-		if strings.ContainsAny(p, " \t") {
+		if strings.ContainsAny(p, `"{}'`) {
+			parts[i] = `'` + strings.ReplaceAll(p, `'`, `'\''`) + `'`
+		} else if strings.ContainsAny(p, " \t") {
 			parts[i] = `"` + p + `"`
 		}
 	}

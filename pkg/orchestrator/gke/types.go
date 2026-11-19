@@ -34,6 +34,7 @@ import (
 	iamapi "google.golang.org/api/iam/v1"
 	gcs "google.golang.org/api/storage/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -1025,3 +1026,49 @@ const (
 	probeInvalid                   // empty/blank context name refused before running kubectl
 	probeUnknown
 )
+
+type kueueResourceQuota struct {
+	Name         string            `json:"name"`
+	NominalQuota resource.Quantity `json:"nominalQuota"`
+}
+
+type kueueFlavorQuotas struct {
+	Name      string               `json:"name"`
+	Resources []kueueResourceQuota `json:"resources"`
+}
+
+type kueueResourceGroup struct {
+	CoveredResources []string            `json:"coveredResources"`
+	Flavors          []kueueFlavorQuotas `json:"flavors"`
+}
+
+type kueueClusterQueue struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		ResourceGroups []kueueResourceGroup `json:"resourceGroups"`
+	} `json:"spec"`
+}
+
+type kueueToleration struct {
+	Key      string `json:"key"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
+	Effect   string `json:"effect"`
+}
+
+type kueueResourceFlavor struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		NodeLabels  map[string]string `json:"nodeLabels"`
+		NodeTaints  []gkeTaint        `json:"nodeTaints"`
+		Tolerations []kueueToleration `json:"tolerations"`
+	} `json:"spec"`
+}
+
+type kueueResourceFlavorList struct {
+	Items []kueueResourceFlavor `json:"items"`
+}

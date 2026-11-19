@@ -339,11 +339,14 @@ func TestCheckClusterQueueCoverage(t *testing.T) {
 			mockExec := NewMockExecutor(responses)
 			orc := newTestGKEOrchestrator(mockExec)
 
-			gotCoverage, gotEmpty, err := orc.checkClusterQueueCoverage("default")
+			gotCQ, gotCoverage, gotEmpty, err := orc.checkClusterQueueCoverage("default")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("checkClusterQueueCoverage() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
+				if gotCQ == nil {
+					t.Errorf("checkClusterQueueCoverage() returned nil ClusterQueue on success")
+				}
 				if gotCoverage != tt.wantCoverage || gotEmpty != tt.wantEmpty {
 					t.Errorf("checkClusterQueueCoverage() gotCoverage = %v (want %v), gotEmpty = %v (want %v)", gotCoverage, tt.wantCoverage, gotEmpty, tt.wantEmpty)
 				}
@@ -1137,12 +1140,12 @@ func TestCheckClusterQueueCoverage_Forbidden(t *testing.T) {
 	}
 	orc := &GKEOrchestrator{executor: mock}
 
-	covered, isNew, err := orc.checkClusterQueueCoverage("default")
+	cq, covered, isNew, err := orc.checkClusterQueueCoverage("default")
 	if err != nil {
 		t.Fatalf("checkClusterQueueCoverage should succeed and skip on 403 Forbidden, got: %v", err)
 	}
-	if !covered || isNew {
-		t.Errorf("expected covered=true, isNew=false on 403 Forbidden, got covered=%v, isNew=%v", covered, isNew)
+	if cq != nil || !covered || isNew {
+		t.Errorf("expected cq=nil, covered=true, isNew=false on 403 Forbidden, got cq=%v, covered=%v, isNew=%v", cq, covered, isNew)
 	}
 }
 
@@ -1156,7 +1159,13 @@ func TestEnsureClusterQueueCoverage_Covered(t *testing.T) {
 			if strings.Contains(fullCmd, "get clusterqueue") {
 				return shell.CommandResult{
 					ExitCode: 0,
-					Stdout:   `{"spec": {"resourceGroups": [{"coveredResources": ["cpu", "memory"]}]}}`,
+					Stdout:   `{"spec": {"resourceGroups": [{"coveredResources": ["cpu", "memory"], "flavors": [{"name": "pathways-flavor", "resources": [{"name": "cpu", "nominalQuota": "100"}, {"name": "memory", "nominalQuota": "400Gi"}]}]}]}}`,
+				}
+			}
+			if strings.Contains(fullCmd, "get resourceflavor") {
+				return shell.CommandResult{
+					ExitCode: 0,
+					Stdout:   `{"items": [{"metadata": {"name": "pathways-flavor"}, "spec": {}}]}`,
 				}
 			}
 			return shell.CommandResult{ExitCode: 0}
@@ -1164,7 +1173,7 @@ func TestEnsureClusterQueueCoverage_Covered(t *testing.T) {
 	}
 	orc := &GKEOrchestrator{executor: mock}
 
-	err := orc.ensureClusterQueueCoverage("default", "default")
+	err := orc.ensureClusterQueueCoverage("default", "default", "cpu-np")
 	if err != nil {
 		t.Fatalf("ensureClusterQueueCoverage failed on covered queue: %v", err)
 	}
@@ -1775,5 +1784,225 @@ func TestCheckAndInstallKueue_SharedClusterForbidden(t *testing.T) {
 	}
 	if rolloutCalls != 1 {
 		t.Errorf("kubectl rollout status calls = %d, want 1", rolloutCalls)
+	}
+}
+
+func TestValidatePathwaysHeadQueue(t *testing.T) {
+	unifiedCQWith := func(flavorsJSON string) string {
+		return `{"metadata":{"name":"cluster-queue"},"spec":{"resourceGroups":[{"coveredResources":["google.com/tpu","cpu","memory"],"flavors":[` + flavorsJSON + `]}]}}`
+	}
+	pathwaysQuota := `{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"100"},{"name":"memory","nominalQuota":"400Gi"}]}`
+	tpuQuotaZeroCPU := `{"name":"flavor-tpu-v6e-slice","resources":[{"name":"google.com/tpu","nominalQuota":"64"},{"name":"cpu","nominalQuota":"0"},{"name":"memory","nominalQuota":"0"}]}`
+	tpuFlavorObj := `{"metadata":{"name":"flavor-tpu-v6e-slice"},"spec":{"nodeLabels":{"cloud.google.com/gke-tpu-accelerator":"tpu-v6e-slice"},"nodeTaints":[{"key":"google.com/tpu","value":"present","effect":"NoSchedule"}]}}`
+
+	tests := []struct {
+		name       string
+		headPool   string
+		cqJSON     string
+		rfJSON     string
+		wantErr    bool
+		wantErrSub string
+	}{
+		{
+			name:     "agnostic pathways-flavor admits pathways-np and custom pools",
+			headPool: "pathways-np",
+			cqJSON:   unifiedCQWith(tpuQuotaZeroCPU + `,` + pathwaysQuota),
+			rfJSON:   `{"items":[` + tpuFlavorObj + `,{"metadata":{"name":"pathways-flavor"},"spec":{}}]}`,
+			wantErr:  false,
+		},
+		{
+			name:     "matching pinned pathways-flavor admits pathways-np",
+			headPool: "pathways-np",
+			cqJSON:   unifiedCQWith(pathwaysQuota),
+			rfJSON:   `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeLabels":{"cloud.google.com/gke-nodepool":"pathways-np"}}}]}`,
+			wantErr:  false,
+		},
+		{
+			name:       "pinned cpu-np pathways-flavor rejects pathways-np with actionable patch hint",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(pathwaysQuota + `,` + tpuQuotaZeroCPU),
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeLabels":{"cloud.google.com/gke-nodepool":"cpu-np"}}},` + tpuFlavorObj + `]}`,
+			wantErr:    true,
+			wantErrSub: `'{"spec":{"nodeLabels":null}}'`,
+		},
+		{
+			name:       "TPU flavor alone rejected even when flavor tolerates google.com/tpu and has CPU/Mem quota",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(`{"name":"flavor-tpu-v6e-slice","resources":[{"name":"google.com/tpu","nominalQuota":"64"},{"name":"cpu","nominalQuota":"200"},{"name":"memory","nominalQuota":"800Gi"}]}`),
+			rfJSON:     `{"items":[{"metadata":{"name":"flavor-tpu-v6e-slice"},"spec":{"nodeLabels":{"cloud.google.com/gke-tpu-accelerator":"tpu-v6e-slice"},"nodeTaints":[{"key":"google.com/tpu","value":"present","effect":"NoSchedule"}],"tolerations":[{"key":"google.com/tpu","operator":"Equal","value":"present","effect":"NoSchedule"}]}}]}`,
+			wantErr:    true,
+			wantErrSub: "targets accelerator label cloud.google.com/gke-tpu-accelerator=tpu-v6e-slice",
+		},
+		{
+			name:       "flavor with untolerated NoSchedule nodeTaint rejects head pod",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(pathwaysQuota),
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeTaints":[{"key":"dedicated","value":"cpu-only","effect":"NoSchedule"}]}}]}`,
+			wantErr:    true,
+			wantErrSub: "untolerated nodeTaint dedicated=cpu-only:NoSchedule",
+		},
+		{
+			name:       "flavor with untolerated NoExecute nodeTaint rejects head pod",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(pathwaysQuota),
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeTaints":[{"key":"dedicated","value":"cpu-only","effect":"NoExecute"}]}}]}`,
+			wantErr:    true,
+			wantErrSub: "untolerated nodeTaint dedicated=cpu-only:NoExecute",
+		},
+		{
+			name:     "flavor with matching Equal toleration for nodeTaint passes",
+			headPool: "pathways-np",
+			cqJSON:   unifiedCQWith(pathwaysQuota),
+			rfJSON:   `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeTaints":[{"key":"dedicated","value":"cpu-only","effect":"NoSchedule"}],"tolerations":[{"key":"dedicated","operator":"Equal","value":"cpu-only","effect":"NoSchedule"}]}}]}`,
+			wantErr:  false,
+		},
+		{
+			name:     "flavor with Exists toleration and soft PreferNoSchedule taint passes",
+			headPool: "pathways-np",
+			cqJSON:   unifiedCQWith(pathwaysQuota),
+			rfJSON:   `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{"nodeTaints":[{"key":"dedicated","value":"cpu-only","effect":"NoSchedule"},{"key":"soft","value":"yes","effect":"PreferNoSchedule"}],"tolerations":[{"key":"dedicated","operator":"Exists"}]}}]}`,
+			wantErr:  false,
+		},
+		{
+			name:       "zero nominalQuota on cpu rejects flavor",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(`{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"0"},{"name":"memory","nominalQuota":"400Gi"}]}`),
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{}}]}`,
+			wantErr:    true,
+			wantErrSub: "missing positive cpu nominalQuota",
+		},
+		{
+			name:       "missing memory nominalQuota rejects flavor",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(`{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"64"}]}`),
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{}}]}`,
+			wantErr:    true,
+			wantErrSub: "missing positive memory nominalQuota",
+		},
+		{
+			name:       "missing ResourceFlavor object on cluster rejects flavor",
+			headPool:   "pathways-np",
+			cqJSON:     unifiedCQWith(pathwaysQuota),
+			rfJSON:     `{"items":[]}`,
+			wantErr:    true,
+			wantErrSub: "ResourceFlavor not found",
+		},
+		{
+			name:     "separate cpu and memory resourceGroups pass when both have compatible flavors",
+			headPool: "pathways-np",
+			cqJSON: `{"metadata":{"name":"cluster-queue"},"spec":{"resourceGroups":[` +
+				`{"coveredResources":["google.com/tpu"],"flavors":[{"name":"flavor-tpu-v6e-slice","resources":[{"name":"google.com/tpu","nominalQuota":"64"}]}]},` +
+				`{"coveredResources":["cpu"],"flavors":[{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"64"}]}]},` +
+				`{"coveredResources":["memory"],"flavors":[{"name":"pathways-flavor","resources":[{"name":"memory","nominalQuota":"256Gi"}]}]}` +
+				`]}}`,
+			rfJSON:  `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{}}]}`,
+			wantErr: false,
+		},
+		{
+			name:     "separate memory resourceGroup pinned away from headPool fails",
+			headPool: "pathways-np",
+			cqJSON: `{"metadata":{"name":"cluster-queue"},"spec":{"resourceGroups":[` +
+				`{"coveredResources":["cpu"],"flavors":[{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"64"}]}]},` +
+				`{"coveredResources":["memory"],"flavors":[{"name":"mem-cpu-np","resources":[{"name":"memory","nominalQuota":"256Gi"}]}]}` +
+				`]}}`,
+			rfJSON:     `{"items":[{"metadata":{"name":"pathways-flavor"},"spec":{}},{"metadata":{"name":"mem-cpu-np"},"spec":{"nodeLabels":{"cloud.google.com/gke-nodepool":"cpu-np"}}}]}`,
+			wantErr:    true,
+			wantErrSub: "cloud.google.com/gke-nodepool=cpu-np does not match head node pool pathways-np",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockExecutor{
+				executeCommandFunc: func(name string, args ...string) shell.CommandResult {
+					cmd := name + " " + strings.Join(args, " ")
+					switch {
+					case strings.Contains(cmd, "get localqueue"):
+						return shell.CommandResult{ExitCode: 0, Stdout: "cluster-queue"}
+					case strings.Contains(cmd, "get clusterqueue"):
+						return shell.CommandResult{ExitCode: 0, Stdout: tt.cqJSON}
+					case strings.Contains(cmd, "get resourceflavor"):
+						return shell.CommandResult{ExitCode: 0, Stdout: tt.rfJSON}
+					default:
+						return shell.CommandResult{ExitCode: 1, Stderr: "unexpected cmd: " + cmd}
+					}
+				},
+			}
+			orc := &GKEOrchestrator{executor: mock}
+			err := orc.validatePathwaysHeadQueue("user-queue", "default", tt.headPool)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validatePathwaysHeadQueue() = nil, want error containing %q", tt.wantErrSub)
+				}
+				if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErrSub)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validatePathwaysHeadQueue() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatePathwaysHeadQueue_ForbiddenSkipsWithoutExtraCalls(t *testing.T) {
+	t.Run("403 on ClusterQueue skips ResourceFlavor lookup", func(t *testing.T) {
+		rfCalls := 0
+		mock := &mockExecutor{
+			executeCommandFunc: func(name string, args ...string) shell.CommandResult {
+				cmd := name + " " + strings.Join(args, " ")
+				if strings.Contains(cmd, "get localqueue") {
+					return shell.CommandResult{ExitCode: 0, Stdout: "cluster-queue"}
+				}
+				if strings.Contains(cmd, "get clusterqueue") {
+					return shell.CommandResult{ExitCode: 1, Stderr: "Error from server (Forbidden): clusterqueues.kueue.x-k8s.io is forbidden"}
+				}
+				if strings.Contains(cmd, "get resourceflavor") {
+					rfCalls++
+				}
+				return shell.CommandResult{ExitCode: 0}
+			},
+		}
+		orc := &GKEOrchestrator{executor: mock}
+		if err := orc.validatePathwaysHeadQueue("user-queue", "default", "pathways-np"); err != nil {
+			t.Fatalf("expected 403 skip without error, got: %v", err)
+		}
+		if rfCalls != 0 {
+			t.Errorf("ResourceFlavor calls = %d, want 0 when ClusterQueue returned 403", rfCalls)
+		}
+	})
+
+	t.Run("403 on ResourceFlavor skips cleanly", func(t *testing.T) {
+		mock := &mockExecutor{
+			executeCommandFunc: func(name string, args ...string) shell.CommandResult {
+				cmd := name + " " + strings.Join(args, " ")
+				if strings.Contains(cmd, "get localqueue") {
+					return shell.CommandResult{ExitCode: 0, Stdout: "cluster-queue"}
+				}
+				if strings.Contains(cmd, "get clusterqueue") {
+					return shell.CommandResult{ExitCode: 0, Stdout: `{"spec":{"resourceGroups":[{"coveredResources":["cpu","memory"],"flavors":[{"name":"pathways-flavor","resources":[{"name":"cpu","nominalQuota":"10"},{"name":"memory","nominalQuota":"10Gi"}]}]}]}}`}
+				}
+				if strings.Contains(cmd, "get resourceflavor") {
+					return shell.CommandResult{ExitCode: 1, Stderr: "Error from server (Forbidden): resourceflavors.kueue.x-k8s.io is forbidden"}
+				}
+				return shell.CommandResult{ExitCode: 0}
+			},
+		}
+		orc := &GKEOrchestrator{executor: mock}
+		if err := orc.validatePathwaysHeadQueue("user-queue", "default", "pathways-np"); err != nil {
+			t.Fatalf("expected 403 ResourceFlavor skip without error, got: %v", err)
+		}
+	})
+}
+
+func TestRenderResourceFlavor_PathwaysFlavorNodePoolAgnostic(t *testing.T) {
+	orc := &GKEOrchestrator{}
+	out, err := orc.renderResourceFlavor("pathways-flavor", map[string]string{})
+	if err != nil {
+		t.Fatalf("renderResourceFlavor failed: %v", err)
+	}
+	if strings.Contains(string(out), nodePoolLabel) {
+		t.Errorf("renderResourceFlavor(pathways-flavor) unexpectedly emitted %s:\n%s", nodePoolLabel, string(out))
 	}
 }

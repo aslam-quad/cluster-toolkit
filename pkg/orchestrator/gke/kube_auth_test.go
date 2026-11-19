@@ -1208,20 +1208,26 @@ func TestRefreshGKEAuth_DNSEndpoint(t *testing.T) {
 
 func TestKubectlCommandLine(t *testing.T) {
 	const path = `C:\Users\Jane Doe\.gcluster\generated\jobset.yaml`
+	const jsonPatch = `{"spec":{"nodeLabels":null}}`
 	args := []string{"apply", "-f", path}
 	tests := []struct {
-		name, kubeContext, want string
+		name, kubeContext string
+		in                []string
+		want              string
 	}{
-		{name: "no context", want: `kubectl apply -f "` + path + `"`},
-		{name: "pinned context", kubeContext: testContext, want: `kubectl --context ` + testContext + ` apply -f "` + path + `"`},
+		{name: "no context", in: args, want: `kubectl apply -f "` + path + `"`},
+		{name: "pinned context", kubeContext: testContext, in: args, want: `kubectl --context ` + testContext + ` apply -f "` + path + `"`},
+		{name: "json patch single-quoted", kubeContext: testContext, in: []string{"patch", "resourceflavor", "pathways-flavor", "--type=merge", "-p", jsonPatch}, want: `kubectl --context ` + testContext + ` patch resourceflavor pathways-flavor --type=merge -p '` + jsonPatch + `'`},
+		{name: "embedded single quote escaped", in: []string{"get", "pods", "-l", "a'b"}, want: `kubectl get pods -l 'a'\''b'`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := kubectlCommandLine(tc.kubeContext, args...); got != tc.want {
+			inCopy := slices.Clone(tc.in)
+			if got := kubectlCommandLine(tc.kubeContext, tc.in...); got != tc.want {
 				t.Errorf("kubectlCommandLine() = %s, want %s", got, tc.want)
 			}
-			if !slices.Equal(args, []string{"apply", "-f", path}) {
-				t.Errorf("kubectlCommandLine() modified its arguments: %q", args)
+			if !slices.Equal(tc.in, inCopy) {
+				t.Errorf("kubectlCommandLine() modified its arguments: %q", tc.in)
 			}
 		})
 	}

@@ -649,6 +649,7 @@ func (g *GKEOrchestrator) ApplyManifest(manifestContent, outputManifestPath, wor
 }
 
 func (g *GKEOrchestrator) populateClusterMetadata(job *orchestrator.JobDefinition) error {
+	g.resolvedHeadNodePool = ""
 
 	if job.IsPathwaysJob {
 		if job.Pathways.HeadNodePool != "" {
@@ -866,7 +867,11 @@ func (g *GKEOrchestrator) processNodePoolCapacity(np gkeJobNodePool, location st
 	nodeLabels = make(map[string]string)
 
 	if nodeCount == 0 {
-		return 0, 0, 0, 0, "flavor-default", nodeLabels, sa, nil
+		flavor = "flavor-default"
+		if g.resolvedHeadNodePool != "" && len(np.Config.Accelerators) == 0 && !config.IsTPU(np.Config.MachineType) {
+			flavor = "pathways-flavor"
+		}
+		return 0, 0, 0, 0, flavor, nodeLabels, sa, nil
 	}
 
 	cap, err := g.FetchMachineCapabilities(np.Config.MachineType, location)
@@ -878,7 +883,7 @@ func (g *GKEOrchestrator) processNodePoolCapacity(np gkeJobNodePool, location st
 	memMb = cap.MemoryMb * nodeCount
 
 	flavor = "flavor-default"
-	if np.Name == g.resolvedHeadNodePool {
+	if g.resolvedHeadNodePool != "" && len(np.Config.Accelerators) == 0 && !config.IsTPU(np.Config.MachineType) {
 		flavor = "pathways-flavor"
 	}
 
@@ -892,10 +897,6 @@ func (g *GKEOrchestrator) processNodePoolCapacity(np gkeJobNodePool, location st
 	nodeLabels = accLabels
 	if accFlavor != "flavor-default" {
 		flavor = accFlavor
-	}
-
-	if flavor == "pathways-flavor" {
-		nodeLabels["cloud.google.com/gke-nodepool"] = np.Name
 	}
 
 	return cpus, memMb, gpus, tpus, flavor, nodeLabels, sa, nil

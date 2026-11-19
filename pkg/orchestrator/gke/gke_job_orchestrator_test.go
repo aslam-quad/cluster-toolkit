@@ -2851,10 +2851,8 @@ func TestProcessNodePoolCapacity_FlavorsAndLabels(t *testing.T) {
 				},
 			},
 			wantFlavor: "pathways-flavor",
-			wantLabels: map[string]string{
-				"cloud.google.com/gke-nodepool": "cpu-np",
-			},
-			wantErr: false,
+			wantLabels: map[string]string{},
+			wantErr:    false,
 		},
 		{
 			name: "TPU Pool with Topology",
@@ -4309,8 +4307,8 @@ func TestPopulateClusterMetadata_PathwaysHeadNodePoolCapacity(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected pathways-flavor to be populated in cluster capacity, got flavors: %+v", orc.capacity.Flavors)
 		}
-		if pwFlavor.NodeLabels["cloud.google.com/gke-nodepool"] != "cpu-np" {
-			t.Errorf("expected pathways-flavor nodepool label 'cpu-np', got %q", pwFlavor.NodeLabels["cloud.google.com/gke-nodepool"])
+		if len(pwFlavor.NodeLabels) != 0 {
+			t.Errorf("expected pathways-flavor to have no nodeLabels (node-pool agnostic), got %+v", pwFlavor.NodeLabels)
 		}
 	})
 
@@ -4335,6 +4333,70 @@ func TestPopulateClusterMetadata_PathwaysHeadNodePoolCapacity(t *testing.T) {
 			t.Errorf("autoDetectCPUNodePool() = %q, want 'pathways-np'", got)
 		}
 	})
+}
+
+func TestPopulateClusterMetadata_MultiPoolPathwaysFlavor(t *testing.T) {
+	setupMockMachineConfig(t)
+
+	orc := newTestGKEOrchestrator(NewMockExecutor(nil))
+	orc.machineCapCache["n4-standard-64:us-central1-a"] = MachineTypeCap{GuestCpus: 64, MemoryMb: 262144}
+	orc.machineCapCache["n2-standard-16:us-central1-a"] = MachineTypeCap{GuestCpus: 16, MemoryMb: 65536}
+	orc.machineCapCache["ct6e-standard-4t:us-central1-a"] = MachineTypeCap{GuestCpus: 176, MemoryMb: 180224}
+	orc.clusterDesc = gkeCluster{
+		NodePools: []gkeJobNodePool{
+			{Name: "system", InitialNodeCount: 2, Config: gkeNodePoolConfig{
+				MachineType: "n4-standard-4",
+				Taints:      []gkeTaint{{Key: "components.gke.io/gke-managed-components", Value: "true", Effect: "NoSchedule"}},
+			}},
+			{Name: "cpu-np", InitialNodeCount: 0, Autoscaling: gkeAutoscaling{Enabled: false}, Config: gkeNodePoolConfig{MachineType: "n4-standard-64"}},
+			{Name: "pathways-np", InitialNodeCount: 1, Config: gkeNodePoolConfig{MachineType: "n2-standard-16"}},
+			{Name: "tpu-np", InitialNodeCount: 1, Config: gkeNodePoolConfig{
+				MachineType:  "ct6e-standard-4t",
+				Accelerators: []gkeAccelerator{{AcceleratorType: "tpu-v6e-slice", AcceleratorCount: "4"}},
+			}},
+		},
+	}
+	job := &orchestrator.JobDefinition{
+		ClusterName:     "test-cluster",
+		ClusterLocation: "us-central1-a",
+		IsPathwaysJob:   true,
+		Pathways:        orchestrator.PathwaysJobDefinition{HeadNodePool: "pathways-np"},
+	}
+	if err := orc.populateClusterMetadata(job); err != nil {
+		t.Fatalf("populateClusterMetadata() failed: %v", err)
+	}
+
+	// Both cpu-np (even 0 nodes) and pathways-np map to pathways-flavor with empty nodeLabels.
+	_, _, _, _, cpuNPFlavor, cpuNPLabels, _, err := orc.processNodePoolCapacity(orc.clusterDesc.NodePools[1], "us-central1-a")
+	if err != nil {
+		t.Fatalf("processNodePoolCapacity(cpu-np) error: %v", err)
+	}
+	if cpuNPFlavor != "pathways-flavor" || len(cpuNPLabels) != 0 {
+		t.Errorf("0-node cpu-np got flavor=%q labels=%v, want pathways-flavor with empty labels", cpuNPFlavor, cpuNPLabels)
+	}
+	pwFlavor, ok := orc.capacity.Flavors["pathways-flavor"]
+	if !ok || len(pwFlavor.NodeLabels) != 0 {
+		t.Errorf("capacity.Flavors[pathways-flavor] = %+v (present=%v), want empty NodeLabels", pwFlavor, ok)
+	}
+	if _, hasDefault := orc.capacity.Flavors["flavor-default"]; hasDefault {
+		t.Errorf("did not expect flavor-default when all CPU pools belong to pathways-flavor, got %+v", orc.capacity.Flavors)
+	}
+
+	// Non-Pathways follow-up call resets resolvedHeadNodePool so CPU pools return to flavor-default.
+	nonPWJob := &orchestrator.JobDefinition{
+		ClusterName:     "test-cluster",
+		ClusterLocation: "us-central1-a",
+		IsPathwaysJob:   false,
+	}
+	if err := orc.populateClusterMetadata(nonPWJob); err != nil {
+		t.Fatalf("non-Pathways populateClusterMetadata() failed: %v", err)
+	}
+	if orc.resolvedHeadNodePool != "" {
+		t.Errorf("expected resolvedHeadNodePool reset to empty, got %q", orc.resolvedHeadNodePool)
+	}
+	if _, ok := orc.capacity.Flavors["pathways-flavor"]; ok {
+		t.Errorf("did not expect pathways-flavor on non-Pathways job, got %+v", orc.capacity.Flavors)
+	}
 }
 
 func TestCheckJobSetWarningEvents_IncludesPodSchedulingEvents(t *testing.T) {

@@ -1265,6 +1265,80 @@ class ParseXpkToGclusterTest(unittest.TestCase):
     out = parse_xpk_to_gcluster.parse_xpk_command(cmd)
     self.assertNotIn("enable_pathways_for_tpus", out)
 
+  def test_cluster_pathways_gce_machine_type_mapping(self):
+    # With `xpk cluster create-pathways`, maps onto cluster_module_settings
+    cmd_pw = (
+        "xpk cluster create-pathways --cluster pw-c --project p1"
+        " --zone us-central1-a --tpu-type v6e-16"
+        " --pathways-gce-machine-type n2-standard-64"
+    )
+    blueprint, warnings, unmapped = parse_xpk_to_gcluster.parse_cluster_create(
+        is_pathways=True,
+        unknown=[
+            "--cluster", "pw-c",
+            "--project", "p1",
+            "--zone", "us-central1-a",
+            "--tpu-type", "v6e-16",
+            "--pathways-gce-machine-type", "n2-standard-64",
+        ],
+    )
+    self.assertEqual(unmapped, [])
+    self.assertTrue(blueprint["vars"]["enable_pathways_for_tpus"])
+    self.assertEqual(
+        blueprint["cluster_module_settings"][
+            "pathways_cpu_node_pool_machine_type"
+        ],
+        "n2-standard-64",
+    )
+    self.assertNotIn(
+        "pathways_cpu_node_pool_machine_type", blueprint["vars"]
+    )
+    out = parse_xpk_to_gcluster.parse_xpk_command(cmd_pw)
+    self.assertIn("pathways_cpu_node_pool_machine_type: n2-standard-64", out)
+
+    # With `xpk cluster create --enable-pathways`, also maps onto cluster_module_settings
+    bp_flag, _, unmapped_flag = parse_xpk_to_gcluster.parse_cluster_create(
+        is_pathways=False,
+        unknown=[
+            "--cluster", "pw-c",
+            "--project", "p1",
+            "--zone", "us-central1-a",
+            "--tpu-type", "v6e-16",
+            "--enable-pathways",
+            "--pathways-gce-machine-type", "n2d-standard-64",
+        ],
+    )
+    self.assertEqual(unmapped_flag, [])
+    self.assertEqual(
+        bp_flag["cluster_module_settings"][
+            "pathways_cpu_node_pool_machine_type"
+        ],
+        "n2d-standard-64",
+    )
+
+    # Without Pathways enabled, warns and omits setting
+    bp_no_pw, warn_no_pw, unmapped_no_pw = (
+        parse_xpk_to_gcluster.parse_cluster_create(
+            is_pathways=False,
+            unknown=[
+                "--cluster", "tpu-c",
+                "--project", "p1",
+                "--zone", "us-central1-a",
+                "--tpu-type", "v6e-16",
+                "--pathways-gce-machine-type", "n2-standard-64",
+            ],
+        )
+    )
+    self.assertEqual(unmapped_no_pw, [])
+    self.assertNotIn(
+        "pathways_cpu_node_pool_machine_type",
+        bp_no_pw["cluster_module_settings"],
+    )
+    self.assertTrue(
+        any("Pathways is not enabled" in w for w in warn_no_pw),
+        msg=warn_no_pw,
+    )
+
   def test_workload_create_image_flag_precedence_and_conflicts(self):
     # Case 1: --docker-image alone emits --image
     cmd1 = (
