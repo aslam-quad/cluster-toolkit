@@ -147,8 +147,9 @@ deployment_groups:
         content: |
           #!/bin/bash
           set -e -o pipefail
+          export PATH=/usr/local/bin:$PATH
           dnf update -y
-          dnf install -y epel-release git ansible-core
+          dnf install -y epel-release git
           ansible-pull -U https://github.com/GoogleCloudPlatform/slurm-gcp -C $(vars.build_slurm_from_git_ref) \
               -i localhost, --limit localhost --connection=local \
               -e @/var/tmp/slurm_vars.json ansible/playbook.yml
