@@ -2544,7 +2544,7 @@ blueprints:
     a3_partition_name: null
     a3_reservation_name: null
     a3_static_cluster_size: null
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     controller_machine_type: c2-standard-8
     deployment_name: null
     disk_size_gb: 200
@@ -2634,7 +2634,7 @@ blueprints:
     base_image:
       image: ubuntu-accelerator-2404-amd64-with-nvidia-580-v20260522
       project: ubuntu-os-accelerator-images
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     controller_machine_type: c2-standard-8
     debug_machine_type: n2-standard-2
     debug_node_count_dynamic_max: 4
@@ -2745,7 +2745,7 @@ blueprints:
     base_image:
       image: ubuntu-accelerator-2204-amd64-with-nvidia-570-v20260210
       project: ubuntu-os-accelerator-images
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     controller_machine_type: c2-standard-8
     controller_runners:
     - content: "$(\"#!/bin/bash\\nSLURM_ROOT=/opt/apps/adm/slurm\\nmkdir -m 0755 -p \\\"$${SLURM_ROOT}/scripts\\\"\\nmkdir -p \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-prolog_slurmd.d\\\"\\nmkdir -p \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-epilog_slurmd.d\\\"\\ncurl -s -o \\\"$${SLURM_ROOT}/scripts/sudo-oslogin\\\" \\\\\\n    https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/master/tools/prologs-epilogs/sudo-oslogin\\nchmod 0755 \\\"$${SLURM_ROOT}/scripts/sudo-oslogin\\\"\\nln -s \\\"$${SLURM_ROOT}/scripts/sudo-oslogin\\\" \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-prolog_slurmd.d/sudo-oslogin.prolog_slurmd\\\"\\nln -s \\\"$${SLURM_ROOT}/scripts/sudo-oslogin\\\" \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-epilog_slurmd.d/sudo-oslogin.epilog_slurmd\\\"\\ncurl -s -o \\\"$${SLURM_ROOT}/scripts/rxdm\\\" \\\\\\n    https://raw.githubusercontent.com/GoogleCloudPlatform/slurm-gcp/master/tools/prologs-epilogs/receive-data-path-manager-mega\\nchmod 0755 \\\"$${SLURM_ROOT}/scripts/rxdm\\\"\\nln -s \\\"$${SLURM_ROOT}/scripts/rxdm\\\" \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-prolog_slurmd.d/rxdm.prolog_slurmd\\\"\\nln -s \\\"$${SLURM_ROOT}/scripts/rxdm\\\" \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-epilog_slurmd.d/rxdm.epilog_slurmd\\\"\\n# Uncomment the line below to enable epilog that will check health of GPUs and drain node if problem is detected.\\n# ln -s \\\"/slurm/scripts/tools/gpu-test\\\" \\\"$${SLURM_ROOT}/partition-${vars.a3mega_partition_name}-epilog_slurmd.d/gpu-test.epilog_slurmd\\\"\\n\")"
@@ -3279,7 +3279,7 @@ blueprints:
     benchmark_dir: "$(ghpc_stage(\"system_benchmarks\"))"
     build_from_image_family: ubuntu-accelerator-2404-arm64-with-nvidia-580
     build_from_image_project: ubuntu-os-accelerator-images
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     built_image_family: slurm-ubuntu2404-a4x-max-metal
     controller_machine_type: c4a-highcpu-16
     deployment_name: null
@@ -3588,7 +3588,7 @@ blueprints:
   workloads: [ml-training, ml-inference]
   required_services: [compute.googleapis.com, file.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     built_image_family: slurm-vgpu-ubuntu2404
     compute_disk_size_gb: 100
     compute_machine_type: g4-standard-12
@@ -3655,7 +3655,7 @@ blueprints:
   workloads: [ml-training, ml-inference]
   required_services: [compute.googleapis.com, file.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     built_image_family: slurm-g4-ubuntu2404
     compute_disk_size_gb: 100
     compute_dws_flex_enabled: false
@@ -5149,7 +5149,7 @@ blueprints:
   workloads: [hpc]
   required_services: [compute.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
-    build_from_git_ref: 6.13.2
+    build_from_git_ref: 6.13.3
     build_from_image_family: hpc-rocky-linux-9
     build_from_image_project: cloud-hpc-image-public
     built_image_family: my-custom-slurm
@@ -5247,7 +5247,7 @@ blueprints:
   required_services: [compute.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
     authorized_ssh_ranges: []
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     built_instance_image:
       family: slurm-rocky9-eda
       project: $(vars.project_id)
@@ -5312,7 +5312,7 @@ blueprints:
   workloads: [hpc]
   required_services: [compute.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
-    build_slurm_from_git_ref: 6.13.2
+    build_slurm_from_git_ref: 6.13.3
     built_instance_image:
       family: slurm-rocky9
       project: $(vars.project_id)
@@ -5425,7 +5425,7 @@ blueprints:
   required_services: [compute.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
     authorized_ssh_ranges: []
-    build_slurm_from_git_ref: 6.12.1
+    build_slurm_from_git_ref: 6.13.3
     built_instance_image:
       family: slurm-rocky9
       project: $(vars.project_id)
