@@ -5076,7 +5076,7 @@ blueprints:
   workloads: [hpc]
   required_services: [compute.googleapis.com, iam.googleapis.com, logging.googleapis.com, storage.googleapis.com]
   vars:
-    build_from_git_ref: 6.13.3
+    build_from_git_ref: fix/protected-kmods-ansible
     build_from_image_family: aci-cpu-rocky-linux-9-amd64
     build_from_image_project: advanced-compute-images
     built_image_family: my-custom-slurm
