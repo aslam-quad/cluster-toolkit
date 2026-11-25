@@ -25,7 +25,7 @@ vars:
   disk_size_gb: 50
   build_from_image_family: aci-cpu-rocky-linux-9-amd64
   build_from_image_project: advanced-compute-images
-  build_from_git_ref: 6.13.3
+  build_from_git_ref: fix/protected-kmods-ansible
   built_image_family: my-custom-slurm
   built_instance_image:
     family: $(vars.built_image_family)
@@ -85,7 +85,7 @@ deployment_groups:
           set -e -o pipefail
           export PATH=/usr/local/bin:$PATH
           ansible-pull \
-              -U https://github.com/GoogleCloudPlatform/slurm-gcp -C $(vars.build_from_git_ref) \
+              -U https://github.com/aslam-quad/slurm-gcp -C $(vars.build_from_git_ref) \
               -i localhost, --limit localhost --connection=local \
               -e @/var/tmp/slurm_vars.json \
               ansible/playbook.yml
