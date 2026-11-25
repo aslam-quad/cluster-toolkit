@@ -23,6 +23,7 @@ import (
 	"hpc-toolkit/pkg/orchestrator/k8s"
 	"hpc-toolkit/pkg/shell"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -215,8 +216,9 @@ type GKEOrchestrator struct {
 	dynClientContext string
 	k8sCluster       string
 	// inspectedPVCs caches per-submit PVC metadata inspected during ValidateClusterMounts.
-	inspectedPVCs  map[string]pvcInspectResult
-	nfsAuthChecked bool
+	inspectedPVCs   map[string]pvcInspectResult
+	nfsAuthChecked  bool
+	preflightClient storagePreflightClient
 	// inventory caches pure-Kubernetes node, slice, and label-scheme discovery results for the current run.
 	inventory *k8s.Inventory
 }
@@ -367,7 +369,6 @@ type StorageManager struct {
 	getFilestoreIP  func(ctx context.Context, projectID, location, nameOrIP string, isIP bool) (string, string, int64, error)
 	filestoreClient filestoreClient
 	instancesCache  []*filestorepb.Instance
-	preflightClient storagePreflightClient
 	now             func() time.Time // stamps last-claimed-at; nil means time.Now
 }
 
@@ -412,8 +413,8 @@ type storagePreflightClient interface {
 
 type gcpPreflightClient struct {
 	storage *gcs.Service
-	iam     *iamapi.Service
-	crm     *crm.Service
+	iam     func() (*iamapi.Service, error)
+	crm     func() (*crm.Service, error)
 }
 
 type iamBinding struct {
@@ -423,9 +424,10 @@ type iamBinding struct {
 
 // DataLocations is set only for custom dual-region buckets.
 type bucketLocation struct {
-	Location      string
-	LocationType  string
-	DataLocations []string
+	Location              string
+	LocationType          string
+	DataLocations         []string
+	HierarchicalNamespace bool
 }
 
 type profileMount struct {
@@ -710,6 +712,16 @@ type EnvVar struct {
 	Value string
 }
 
+// EnvVars is the env list rendered into one container. The embedded workload templates call Has on the Env and
+// Pathways*Env fields to skip a default the user sets, so data rendered by those templates must expose them as
+// EnvVars.
+type EnvVars []EnvVar
+
+// Has reports whether the list sets the variable name.
+func (e EnvVars) Has(name string) bool {
+	return slices.ContainsFunc(e, func(v EnvVar) bool { return v.Name == name })
+}
+
 type jobSetTemplateData struct {
 	WorkloadName string
 	// Namespace is the namespace resolved for the submission; rendered as metadata.namespace so a saved manifest
@@ -758,10 +770,10 @@ type jobSetTemplateData struct {
 	PathwaysRMAddress             string // remote resource manager for the proxy (SPS client); empty means the local head
 	ExclusiveTopologyAnnotation   string
 	Verbose                       bool
-	Env                           []EnvVar
-	PathwaysProxyEnv              []EnvVar
-	PathwaysServerEnv             []EnvVar
-	PathwaysWorkerEnv             []EnvVar
+	Env                           EnvVars
+	PathwaysProxyEnv              EnvVars
+	PathwaysServerEnv             EnvVars
+	PathwaysWorkerEnv             EnvVars
 	IsTPU                         bool
 	IsGPU                         bool
 	GKEMTCEnabled                 bool
